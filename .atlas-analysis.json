@@ -1,0 +1,118 @@
+{
+  "projectType": "saas",
+  "projectName": "Click Creators Scraper",
+  "projectDescription": "Instagram marketing automation platform for scraping followers, managing campaigns, and distributing profiles to virtual assistants via Airtable.",
+  "theme": "aspen",
+  "primaryColor": "#E4405F",
+  "lightColor": "#FD7E9F",
+  "darkColor": "#C13584",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/scraping-jobs",
+              "features/campaign-management",
+              "features/va-distribution",
+              "features/airtable-sync"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/authentication",
+              "guides/creating-jobs",
+              "guides/managing-campaigns",
+              "guides/multi-tenant-setup"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/database-schema",
+              "architecture/api-integration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Backend API",
+            "pages": [
+              "api/overview",
+              "api/scrape-followers",
+              "api/ingest",
+              "api/daily-selection",
+              "api/distribute",
+              "api/airtable-sync"
+            ]
+          },
+          {
+            "group": "Client SDK",
+            "pages": [
+              "api/scraping-jobs",
+              "api/api-client"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Components",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "components/overview"
+            ]
+          },
+          {
+            "group": "Feature Components",
+            "pages": [
+              "components/dependencies-card",
+              "components/payments-table",
+              "components/campaigns-table",
+              "components/configure-job-card",
+              "components/job-list"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-platform social media scraping (Instagram, TikTok, Threads, X)",
+    "Gender-based profile filtering",
+    "Multi-tenant job management with base isolation",
+    "Campaign creation and tracking",
+    "Automated VA distribution (80 tables × 180 profiles)",
+    "Airtable synchronization",
+    "Real-time statistics and progress tracking",
+    "Supabase database with RLS"
+  ],
+  "publicApiSurface": [
+    "POST /api/scrape-followers - Scrape Instagram followers from source accounts",
+    "POST /api/ingest - Ingest profiles into database",
+    "POST /api/daily-selection - Create campaign and select profiles",
+    "POST /api/distribute/{campaign_id} - Distribute profiles to VA tables",
+    "POST /api/airtable-sync/{campaign_id} - Sync profiles to Airtable",
+    "POST /api/cleanup - Cleanup 7-day old campaigns",
+    "createScrapingJob() - Create new scraping job",
+    "getActiveJob() - Get active scraping job",
+    "getJobStatistics() - Get job statistics",
+    "apiRequest() - Make API request with base_id injection"
+  ]
+}
