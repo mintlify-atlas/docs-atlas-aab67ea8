@@ -1,0 +1,341 @@
+---
+title: 'POST /api/airtable-sync/{campaign_id}'
+description: 'Sync campaign profiles to Airtable for VA access'
+---
+
+## Endpoint
+
+```
+POST /api/airtable-sync/{campaign_id}
+```
+
+Synchronizes the distributed campaign profiles to Airtable, creating records in 80 separate VA tables. This is the final step in the VA assignment workflow.
+
+## Path Parameters
+
+<ParamField path="campaign_id" type="string" required>
+  UUID of the campaign created by `/api/daily-selection` and distributed by `/api/distribute`. 
+  
+  Example: `550e8400-e29b-41d4-a716-446655440000`
+</ParamField>
+
+## Request Body
+
+This endpoint does not require a request body.
+
+## Response Fields
+
+<ResponseField name="success" type="boolean" required>
+  Indicates whether the Airtable synchronization completed successfully.
+</ResponseField>
+
+<ResponseField name="campaign_id" type="string" required>
+  UUID of the campaign that was synced.
+</ResponseField>
+
+<ResponseField name="tables_synced" type="number" required>
+  Number of Airtable tables that were synced (always 80).
+</ResponseField>
+
+<ResponseField name="total_records" type="number" required>
+  Total number of records created in Airtable (always 14,400).
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:5001/api/airtable-sync/550e8400-e29b-41d4-a716-446655440000
+```
+
+```typescript TypeScript
+const campaignId = '550e8400-e29b-41d4-a716-446655440000';
+
+const response = await fetch(
+  `${process.env.NEXT_PUBLIC_API_URL}/api/airtable-sync/${campaignId}`,
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    }
+  }
+);
+
+const data = await response.json();
+```
+
+```python Python
+import requests
+
+campaign_id = '550e8400-e29b-41d4-a716-446655440000'
+url = f'http://localhost:5001/api/airtable-sync/{campaign_id}'
+
+response = requests.post(url)
+data = response.json()
+```
+</CodeGroup>
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "campaign_id": "550e8400-e29b-41d4-a716-446655440000",
+  "tables_synced": 80,
+  "total_records": 14400
+}
+```
+
+## Airtable Configuration
+
+The Airtable sync requires proper environment configuration:
+
+```bash .env
+# Airtable API Key (personal access token)
+AIRTABLE_API_KEY=your-airtable-key
+
+# Airtable Base ID (from base URL)
+AIRTABLE_BASE_ID=your-base-id
+```
+
+<Note>
+  Your Airtable base must have 80 tables named "Table 1" through "Table 80". The sync will fail if any tables are missing.
+</Note>
+
+## Airtable Table Structure
+
+Each of the 80 Airtable tables should have the following fields:
+
+| Field Name | Type | Description |
+|------------|------|-------------|
+| `Username` | Single line text | Instagram username |
+| `Campaign ID` | Single line text | UUID of the campaign |
+| `Assigned Date` | Date | When profile was assigned |
+| `Status` | Single select | Contact status (Pending/Contacted/Completed) |
+| `Notes` | Long text | VA notes about contact |
+
+## Sync Process
+
+The synchronization follows these steps:
+
+### 1. Fetch Campaign Profiles
+
+```sql
+SELECT username, va_table_number, assigned_at
+FROM daily_assignments
+WHERE campaign_id = '{campaign_id}'
+ORDER BY va_table_number, username;
+```
+
+### 2. Group by VA Table
+
+Profiles are grouped by `va_table_number` (1-80).
+
+### 3. Batch Upload to Airtable
+
+For each VA table, profiles are uploaded in batches:
+
+```javascript
+// Pseudocode
+for (let tableNum = 1; tableNum <= 80; tableNum++) {
+  const profiles = getProfilesForTable(tableNum);
+  const records = profiles.map(p => ({
+    fields: {
+      'Username': p.username,
+      'Campaign ID': campaign_id,
+      'Assigned Date': p.assigned_at,
+      'Status': 'Pending'
+    }
+  }));
+  
+  // Upload in batches of 10 (Airtable limit)
+  await uploadToAirtable(`Table ${tableNum}`, records);
+  
+  // Rate limiting: 5 requests per second
+  await delay(200);
+}
+```
+
+<Warning>
+  **Airtable Rate Limits:** The API enforces Airtable's rate limit of 5 requests per second. For 80 tables, the sync takes approximately 16-20 seconds.
+</Warning>
+
+## Campaign Workflow
+
+This is the final step in the VA assignment workflow:
+
+```mermaid
+graph LR
+    A[POST /api/daily-selection] --> B[POST /api/distribute/campaign_id]
+    B --> C[POST /api/airtable-sync/campaign_id]
+    style C fill:#4CAF50
+```
+
+1. **Daily Selection (0-33%):** Creates campaign
+2. **Distribution (33-66%):** Distributes to VA tables
+3. **Airtable Sync (66-100%):** ← You are here (final step)
+
+## Error Responses
+
+### Campaign Not Found
+
+```json
+{
+  "success": false,
+  "error": "Campaign not found",
+  "details": {
+    "campaign_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+### Campaign Not Distributed
+
+```json
+{
+  "success": false,
+  "error": "Campaign must be distributed before syncing to Airtable",
+  "details": {
+    "campaign_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+<Tip>
+  Make sure to call `/api/distribute/{campaign_id}` before syncing to Airtable.
+</Tip>
+
+### Airtable API Error
+
+```json
+{
+  "success": false,
+  "error": "Airtable API error: Invalid API key"
+}
+```
+
+### Missing Airtable Table
+
+```json
+{
+  "success": false,
+  "error": "Airtable table not found: Table 45",
+  "details": {
+    "base_id": "your-base-id",
+    "missing_table": "Table 45"
+  }
+}
+```
+
+### Rate Limit Exceeded
+
+```json
+{
+  "success": false,
+  "error": "Airtable rate limit exceeded",
+  "details": {
+    "retry_after": 30
+  }
+}
+```
+
+## Campaign Status Update
+
+After successful sync, the campaign status is updated:
+
+```sql
+UPDATE campaigns
+SET status = 'success'
+WHERE campaign_id = '{campaign_id}';
+```
+
+If the sync fails, the status is set to `'failed'`:
+
+```sql
+UPDATE campaigns
+SET status = 'failed'
+WHERE campaign_id = '{campaign_id}';
+```
+
+## Monitoring Sync Progress
+
+Use these SQL queries to monitor the sync:
+
+```sql
+-- Check campaign status
+SELECT campaign_id, status, created_at
+FROM campaigns
+WHERE campaign_id = '{campaign_id}';
+
+-- Verify all profiles are distributed
+SELECT 
+  va_table_number,
+  COUNT(*) as profiles
+FROM daily_assignments
+WHERE campaign_id = '{campaign_id}'
+GROUP BY va_table_number
+HAVING COUNT(*) != 180;  -- Should return no rows
+```
+
+## VA Access
+
+After successful sync, VAs can access their assigned profiles:
+
+1. **Airtable Access:** VAs log into Airtable
+2. **Navigate to Table:** Each VA accesses their assigned table (e.g., "Table 15")
+3. **View Profiles:** 180 Instagram usernames appear
+4. **Update Status:** VAs mark profiles as "Contacted" or "Completed"
+5. **Add Notes:** VAs document their outreach efforts
+
+<Note>
+  VAs should only have access to their specific table. Configure Airtable permissions accordingly to prevent cross-VA visibility.
+</Note>
+
+## Performance
+
+Sync performance metrics:
+
+- **Processing Time:** ~16-20 seconds for all 80 tables
+- **Rate Limiting:** 5 requests/second (Airtable limit)
+- **Batch Size:** 10 records per request (Airtable limit)
+- **Total Requests:** ~80-160 requests (depending on batch optimization)
+
+## Troubleshooting
+
+### Sync Takes Too Long
+
+**Problem:** Sync exceeds 30 seconds
+
+**Solution:** 
+- Check Airtable API status
+- Verify network connection
+- Increase timeout in API configuration
+
+### Partial Sync Completed
+
+**Problem:** Only some tables synced before error
+
+**Solution:**
+- Check which tables failed using Airtable dashboard
+- Re-run the sync endpoint (it should skip already-synced tables)
+- Manually upload missing profiles if needed
+
+### Duplicate Records in Airtable
+
+**Problem:** Same profiles appear multiple times
+
+**Solution:**
+- Clear Airtable tables before re-syncing
+- Implement idempotency checks in your workflow
+- Use Airtable's "Linked Records" feature to prevent duplicates
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Overview" icon="arrow-left" href="/api/overview">
+    Go back to API overview
+  </Card>
+  <Card title="Distribute Profiles" icon="arrow-left" href="/api/distribute">
+    Learn about distribution step
+  </Card>
+</CardGroup>

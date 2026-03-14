@@ -1,0 +1,162 @@
+---
+title: 'API Overview'
+description: 'Learn about the Click Creators Scraper backend API, authentication, and base configuration'
+---
+
+## Introduction
+
+The Click Creators Scraper backend API is a Flask-based REST API that handles Instagram scraping automation, profile management, campaign creation, and Airtable synchronization.
+
+This API powers the Instagram marketing automation platform by:
+- Scraping Instagram followers from source accounts
+- Filtering profiles by gender using name-based detection
+- Managing profile storage and deduplication in Supabase
+- Creating daily campaigns with 14,400 unique profiles
+- Distributing profiles across 80 VA tables
+- Syncing profiles to Airtable for VA access
+
+## Base URL
+
+The API base URL is configurable via environment variables:
+
+**Development:**
+```
+http://localhost:5001
+```
+
+**Production:**
+Set via `NEXT_PUBLIC_API_URL` in your `.env.local` file:
+
+```bash .env.local
+NEXT_PUBLIC_API_URL=https://your-api-domain.com
+```
+
+## Authentication
+
+Currently, the API does not implement authentication middleware. Authentication is handled at the frontend level through the Next.js application.
+
+<Warning>
+  In production environments, ensure you implement proper API authentication and rate limiting to protect your endpoints.
+</Warning>
+
+## Environment Variables
+
+The backend API requires the following environment variables:
+
+```bash .env
+# Supabase Database
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-service-role-key
+
+# Apify Instagram Scraper
+APIPY_API_KEY=your-apify-key
+APIPY_ACTOR_ID=your-actor-id
+
+# Airtable Integration
+AIRTABLE_API_KEY=your-airtable-key
+AIRTABLE_BASE_ID=your-base-id
+
+# Gender Detection (Optional)
+GENDER_API_KEY=your-gender-api-key
+```
+
+## Response Format
+
+All API endpoints return JSON responses with the following structure:
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": { ... },
+  // Additional endpoint-specific fields
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "error": "Error message description",
+  "details": { ... } // Optional additional error details
+}
+```
+
+## Status Codes
+
+The API uses standard HTTP status codes:
+
+| Code | Description |
+|------|-------------|
+| `200` | Success - Request completed successfully |
+| `400` | Bad Request - Invalid parameters or missing required fields |
+| `404` | Not Found - Resource not found (e.g., campaign_id) |
+| `500` | Internal Server Error - Server-side error occurred |
+
+## Available Endpoints
+
+The API provides the following endpoints:
+
+<CardGroup cols={2}>
+  <Card title="Scrape Followers" icon="users" href="/api/scrape-followers">
+    Extract Instagram followers from source accounts with gender filtering
+  </Card>
+  <Card title="Ingest Profiles" icon="database" href="/api/ingest">
+    Save scraped profiles to the database with deduplication
+  </Card>
+  <Card title="Daily Selection" icon="calendar-check" href="/api/daily-selection">
+    Create a campaign and select 14,400 unused profiles
+  </Card>
+  <Card title="Distribute" icon="share-nodes" href="/api/distribute">
+    Distribute campaign profiles across 80 VA tables
+  </Card>
+  <Card title="Airtable Sync" icon="cloud-arrow-up" href="/api/airtable-sync">
+    Sync campaign profiles to Airtable for VA access
+  </Card>
+</CardGroup>
+
+## Rate Limits
+
+<Note>
+  Rate limiting depends on the external services:
+  - **Apify:** Subject to your Apify account tier and run quotas
+  - **Airtable:** 5 requests per second per base (built-in delays implemented)
+  - **Supabase:** Subject to your Supabase plan limits
+</Note>
+
+## Error Handling
+
+When calling the API, implement proper error handling:
+
+```typescript
+try {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/scrape-followers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accounts, targetGender: 'male' })
+  });
+  
+  const data = await response.json();
+  
+  if (!data.success) {
+    throw new Error(data.error || 'API request failed');
+  }
+  
+  // Handle successful response
+  console.log(data);
+} catch (error) {
+  console.error('API Error:', error);
+  // Handle error appropriately
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Scrape Followers" icon="arrow-right" href="/api/scrape-followers">
+    Start by learning how to scrape Instagram followers
+  </Card>
+  <Card title="Campaign Workflow" icon="arrow-right" href="/api/daily-selection">
+    Understand the campaign creation process
+  </Card>
+</CardGroup>

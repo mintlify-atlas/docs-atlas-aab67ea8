@@ -1,0 +1,299 @@
+---
+title: 'POST /api/ingest'
+description: 'Ingest scraped profiles into the database with automatic deduplication'
+---
+
+## Endpoint
+
+```
+POST /api/ingest
+```
+
+Ingests scraped Instagram profiles into the Supabase database. Saves profiles to `raw_scraped_profiles` table and manages deduplication through the `global_usernames` table.
+
+## Request Body
+
+<ParamField body="profiles" type="array" required>
+  Array of profile objects to ingest. Each profile should contain the following fields:
+  
+  <ParamField body="profiles[].id" type="string" required>
+    Instagram user ID (unique identifier)
+  </ParamField>
+  
+  <ParamField body="profiles[].username" type="string" required>
+    Instagram username (without @ symbol)
+  </ParamField>
+  
+  <ParamField body="profiles[].full_name" type="string">
+    User's full name from Instagram profile
+  </ParamField>
+  
+  <ParamField body="profiles[].follower_count" type="number">
+    Number of followers
+  </ParamField>
+  
+  <ParamField body="profiles[].following_count" type="number">
+    Number of accounts following
+  </ParamField>
+  
+  <ParamField body="profiles[].post_count" type="number">
+    Number of posts on the account
+  </ParamField>
+  
+  <ParamField body="profiles[].is_verified" type="boolean">
+    Whether the account is verified
+  </ParamField>
+  
+  <ParamField body="profiles[].is_private" type="boolean">
+    Whether the account is private
+  </ParamField>
+  
+  <ParamField body="profiles[].biography" type="string">
+    User's biography text
+  </ParamField>
+  
+  <ParamField body="profiles[].url" type="string">
+    Full Instagram profile URL
+  </ParamField>
+  
+  <ParamField body="profiles[].detected_gender" type="string">
+    Detected gender from gender detection algorithm (`"male"`, `"female"`, or `"unknown"`)
+  </ParamField>
+</ParamField>
+
+## Response Fields
+
+<ResponseField name="success" type="boolean" required>
+  Indicates whether the ingestion operation completed successfully.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable message describing the result.
+</ResponseField>
+
+<ResponseField name="stats" type="object" required>
+  Statistics about the ingestion operation.
+  
+  <ResponseField name="stats.total_processed" type="number" required>
+    Total number of profiles processed in this ingestion.
+  </ResponseField>
+  
+  <ResponseField name="stats.new_profiles" type="number" required>
+    Number of new profiles added to the database.
+  </ResponseField>
+  
+  <ResponseField name="stats.duplicates" type="number" required>
+    Number of profiles that were duplicates and skipped.
+  </ResponseField>
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:5001/api/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profiles": [
+      {
+        "id": "1234567890",
+        "username": "john_doe",
+        "full_name": "John Doe",
+        "follower_count": 1500,
+        "following_count": 800,
+        "post_count": 120,
+        "is_verified": false,
+        "is_private": false,
+        "biography": "Software Engineer | Tech Enthusiast",
+        "url": "https://www.instagram.com/john_doe",
+        "detected_gender": "male"
+      }
+    ]
+  }'
+```
+
+```typescript TypeScript
+const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/ingest`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    profiles: [
+      {
+        id: '1234567890',
+        username: 'john_doe',
+        full_name: 'John Doe',
+        follower_count: 1500,
+        following_count: 800,
+        post_count: 120,
+        is_verified: false,
+        is_private: false,
+        biography: 'Software Engineer | Tech Enthusiast',
+        url: 'https://www.instagram.com/john_doe',
+        detected_gender: 'male'
+      }
+    ]
+  })
+});
+
+const data = await response.json();
+```
+
+```python Python
+import requests
+
+url = 'http://localhost:5001/api/ingest'
+payload = {
+    'profiles': [
+        {
+            'id': '1234567890',
+            'username': 'john_doe',
+            'full_name': 'John Doe',
+            'follower_count': 1500,
+            'following_count': 800,
+            'post_count': 120,
+            'is_verified': False,
+            'is_private': False,
+            'biography': 'Software Engineer | Tech Enthusiast',
+            'url': 'https://www.instagram.com/john_doe',
+            'detected_gender': 'male'
+        }
+    ]
+}
+
+response = requests.post(url, json=payload)
+data = response.json()
+```
+</CodeGroup>
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "message": "Profiles ingested successfully",
+  "stats": {
+    "total_processed": 450,
+    "new_profiles": 380,
+    "duplicates": 70
+  }
+}
+```
+
+## Database Tables
+
+The ingest endpoint writes to two tables:
+
+### 1. raw_scraped_profiles
+
+Stores complete profile information:
+
+```sql
+CREATE TABLE raw_scraped_profiles (
+  id TEXT PRIMARY KEY,
+  username TEXT,
+  full_name TEXT,
+  follower_count INTEGER,
+  following_count INTEGER,
+  post_count INTEGER,
+  is_verified BOOLEAN,
+  is_private BOOLEAN,
+  biography TEXT,
+  url TEXT,
+  detected_gender TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### 2. global_usernames
+
+Tracks unique usernames for deduplication:
+
+```sql
+CREATE TABLE global_usernames (
+  username TEXT PRIMARY KEY,
+  used BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+## Deduplication Logic
+
+The ingestion process handles duplicates automatically:
+
+1. **Check `global_usernames`:** Verify if username already exists
+2. **Skip Duplicates:** If username exists, increment duplicate counter
+3. **Insert New:** If username is new:
+   - Add to `raw_scraped_profiles` (full data)
+   - Add to `global_usernames` (username only, `used=false`)
+
+<Note>
+  Deduplication is based on Instagram usernames, not user IDs. This ensures the same account isn't targeted multiple times even if their ID changes.
+</Note>
+
+## Workflow Integration
+
+This endpoint is automatically called after successful scraping:
+
+1. **POST /api/scrape-followers** completes
+2. **Auto-trigger POST /api/ingest** with scraped profiles
+3. **Progress updates:** UI shows "Ingesting (60-80%)"
+
+<Tip>
+  The frontend automatically calls this endpoint after scraping. You typically don't need to call it manually unless you're implementing a custom workflow.
+</Tip>
+
+## Error Responses
+
+### Missing Profiles Array
+
+```json
+{
+  "success": false,
+  "error": "Missing required field: profiles"
+}
+```
+
+### Invalid Profile Format
+
+```json
+{
+  "success": false,
+  "error": "Invalid profile format: missing 'id' or 'username' field"
+}
+```
+
+### Database Error
+
+```json
+{
+  "success": false,
+  "error": "Database error: Failed to insert profiles",
+  "details": {
+    "message": "Connection timeout"
+  }
+}
+```
+
+## Performance
+
+**Batch Size Recommendations:**
+- Small batches (less than 100 profiles): ~1-2 seconds
+- Medium batches (100-500): ~3-5 seconds
+- Large batches (500-1000): ~5-10 seconds
+
+<Warning>
+  For very large datasets (greater than 1000 profiles), consider splitting into multiple requests to avoid timeout issues.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Daily Selection" icon="arrow-right" href="/api/daily-selection">
+    Create campaigns from ingested profiles
+  </Card>
+  <Card title="Scrape Followers" icon="arrow-left" href="/api/scrape-followers">
+    Go back to learn about scraping
+  </Card>
+</CardGroup>

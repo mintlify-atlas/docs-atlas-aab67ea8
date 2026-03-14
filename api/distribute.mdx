@@ -1,0 +1,259 @@
+---
+title: 'POST /api/distribute/{campaign_id}'
+description: 'Distribute campaign profiles across 80 VA tables'
+---
+
+## Endpoint
+
+```
+POST /api/distribute/{campaign_id}
+```
+
+Distributes the 14,400 profiles from a campaign evenly across 80 VA tables. Each VA table receives exactly 180 profiles.
+
+## Path Parameters
+
+<ParamField path="campaign_id" type="string" required>
+  UUID of the campaign created by `/api/daily-selection`. 
+  
+  Example: `550e8400-e29b-41d4-a716-446655440000`
+</ParamField>
+
+## Request Body
+
+This endpoint does not require a request body.
+
+## Response Fields
+
+<ResponseField name="success" type="boolean" required>
+  Indicates whether the distribution completed successfully.
+</ResponseField>
+
+<ResponseField name="campaign_id" type="string" required>
+  UUID of the campaign that was distributed.
+</ResponseField>
+
+<ResponseField name="va_tables" type="number" required>
+  Number of VA tables the profiles were distributed to (always 80).
+</ResponseField>
+
+<ResponseField name="profiles_per_table" type="number" required>
+  Number of profiles assigned to each VA table (always 180).
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:5001/api/distribute/550e8400-e29b-41d4-a716-446655440000
+```
+
+```typescript TypeScript
+const campaignId = '550e8400-e29b-41d4-a716-446655440000';
+
+const response = await fetch(
+  `${process.env.NEXT_PUBLIC_API_URL}/api/distribute/${campaignId}`,
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    }
+  }
+);
+
+const data = await response.json();
+```
+
+```python Python
+import requests
+
+campaign_id = '550e8400-e29b-41d4-a716-446655440000'
+url = f'http://localhost:5001/api/distribute/{campaign_id}'
+
+response = requests.post(url)
+data = response.json()
+```
+</CodeGroup>
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "campaign_id": "550e8400-e29b-41d4-a716-446655440000",
+  "va_tables": 80,
+  "profiles_per_table": 180
+}
+```
+
+## Distribution Logic
+
+The endpoint distributes profiles using round-robin allocation:
+
+```python
+# Pseudocode
+va_count = 80
+profiles_per_va = 180
+
+for i, username in enumerate(campaign_profiles):
+    va_table_number = (i % va_count) + 1  # Tables numbered 1-80
+    assign_to_va_table(username, va_table_number)
+```
+
+**Result:**
+- Table 1: Profiles 1, 81, 161, 241, ... (180 total)
+- Table 2: Profiles 2, 82, 162, 242, ... (180 total)
+- Table 3: Profiles 3, 83, 163, 243, ... (180 total)
+- ...
+- Table 80: Profiles 80, 160, 240, 320, ... (180 total)
+
+<Note>
+  VA tables are numbered 1-80 in the database and in Airtable. This ensures consistent mapping between the database and Airtable.
+</Note>
+
+## Database Operations
+
+### Update daily_assignments Table
+
+The distribution updates the `va_table_number` field for each assignment:
+
+```sql
+UPDATE daily_assignments
+SET va_table_number = calculated_table_number
+WHERE campaign_id = '{campaign_id}'
+AND username = '{username}';
+```
+
+### Verify Distribution
+
+You can verify the distribution using SQL:
+
+```sql
+-- Count profiles per VA table
+SELECT 
+  va_table_number,
+  COUNT(*) as profile_count
+FROM daily_assignments
+WHERE campaign_id = '{campaign_id}'
+GROUP BY va_table_number
+ORDER BY va_table_number;
+
+-- Should return 80 rows with 180 profiles each
+```
+
+## Campaign Workflow
+
+This is the second step in the VA assignment workflow:
+
+```mermaid
+graph LR
+    A[POST /api/daily-selection] --> B[POST /api/distribute/campaign_id]
+    B --> C[POST /api/airtable-sync/campaign_id]
+    style B fill:#4CAF50
+```
+
+1. **Daily Selection (0-33%):** Creates campaign
+2. **Distribution (33-66%):** ← You are here
+3. **Airtable Sync (66-100%):** Next step
+
+## Error Responses
+
+### Campaign Not Found
+
+```json
+{
+  "success": false,
+  "error": "Campaign not found",
+  "details": {
+    "campaign_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+### Invalid Campaign ID Format
+
+```json
+{
+  "success": false,
+  "error": "Invalid campaign_id format",
+  "details": {
+    "campaign_id": "invalid-uuid",
+    "expected_format": "UUID v4"
+  }
+}
+```
+
+### Campaign Already Distributed
+
+```json
+{
+  "success": false,
+  "error": "Campaign has already been distributed",
+  "details": {
+    "campaign_id": "550e8400-e29b-41d4-a716-446655440000",
+    "distributed_at": "2025-10-06T10:30:00Z"
+  }
+}
+```
+
+### Insufficient Assignments
+
+```json
+{
+  "success": false,
+  "error": "Campaign has insufficient assignments for distribution",
+  "details": {
+    "campaign_id": "550e8400-e29b-41d4-a716-446655440000",
+    "expected": 14400,
+    "actual": 10000
+  }
+}
+```
+
+## VA Table Structure
+
+Each VA table contains the following information after distribution:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `username` | string | Instagram username to contact |
+| `campaign_id` | UUID | Reference to parent campaign |
+| `va_table_number` | number | VA table number (1-80) |
+| `assigned_at` | timestamp | When profile was assigned |
+
+## Performance
+
+Distribution performance metrics:
+
+- **Processing Time:** ~2-5 seconds for 14,400 profiles
+- **Database Operations:** ~14,400 UPDATE queries
+- **Memory Usage:** Minimal (streaming updates)
+
+<Tip>
+  The distribution process is optimized for speed using batch updates. All 14,400 profiles are typically distributed in under 5 seconds.
+</Tip>
+
+## Monitoring Distribution
+
+Use this SQL query to monitor distribution progress:
+
+```sql
+-- Check distribution progress
+SELECT 
+  COUNT(*) FILTER (WHERE va_table_number IS NOT NULL) as distributed,
+  COUNT(*) FILTER (WHERE va_table_number IS NULL) as pending,
+  ROUND(100.0 * COUNT(*) FILTER (WHERE va_table_number IS NOT NULL) / COUNT(*), 2) as progress_percent
+FROM daily_assignments
+WHERE campaign_id = '{campaign_id}';
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Airtable Sync" icon="arrow-right" href="/api/airtable-sync">
+    Sync distributed profiles to Airtable
+  </Card>
+  <Card title="Daily Selection" icon="arrow-left" href="/api/daily-selection">
+    Go back to learn about campaign creation
+  </Card>
+</CardGroup>

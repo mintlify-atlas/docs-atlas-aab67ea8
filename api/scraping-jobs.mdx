@@ -1,0 +1,989 @@
+---
+title: 'Scraping Jobs'
+description: 'Helper functions for managing multi-tenant scraping jobs in the Click Creators Scraper'
+---
+
+## Overview
+
+The Scraping Jobs API provides helper functions for interacting with the multi-tenant scraping jobs system. These utilities manage influencer scraping configurations, job statistics, usernames, and assignments.
+
+## Import
+
+```typescript
+import {
+  createScrapingJob,
+  getAllJobs,
+  getJobById,
+  getJobsByPlatform,
+  getJobsByStatus,
+  getActiveJob,
+  getActiveBaseId,
+  updateJob,
+  updateJobStatus,
+  getJobStatisticsByBaseId,
+  getJobStatistics,
+  getJobWithStats,
+  getAllJobsWithStats,
+  getJobUsernames,
+  getJobAssignments,
+  addUsernamesToJob,
+  createJobAssignments,
+  archiveJob,
+  pauseJob,
+  activateJob,
+  searchJobsByInfluencer
+} from '@/lib/scraping-jobs';
+```
+
+---
+
+## Job Creation & Retrieval
+
+### createScrapingJob
+
+Create a new scraping job for an influencer.
+
+```typescript
+async function createScrapingJob(
+  input: CreateScrapingJobInput
+): Promise<ScrapingJob | null>
+```
+
+<ParamField path="input" type="CreateScrapingJobInput" required>
+  Configuration for the new scraping job
+  
+  <ParamField path="input.influencer_name" type="string" required>
+    Name of the influencer
+  </ParamField>
+  
+  <ParamField path="input.platform" type="Platform" required>
+    Social media platform: `'instagram'` | `'threads'` | `'tiktok'` | `'x'`
+  </ParamField>
+  
+  <ParamField path="input.airtable_base_id" type="string" required>
+    Airtable base ID for multi-tenant isolation
+  </ParamField>
+  
+  <ParamField path="input.num_vas" type="number">
+    Number of virtual assistants (optional)
+  </ParamField>
+  
+  <ParamField path="input.status" type="JobStatus">
+    Initial job status: `'active'` | `'paused'` | `'archived'` (defaults to `'active'`)
+  </ParamField>
+</ParamField>
+
+<ResponseField name="ScrapingJob" type="ScrapingJob | null">
+  Returns the created job object or `null` if creation failed
+  
+  <ResponseField name="job_id" type="string">
+    Unique job identifier (UUID)
+  </ResponseField>
+  
+  <ResponseField name="influencer_name" type="string">
+    Name of the influencer
+  </ResponseField>
+  
+  <ResponseField name="platform" type="Platform">
+    Social media platform
+  </ResponseField>
+  
+  <ResponseField name="airtable_base_id" type="string">
+    Airtable base ID
+  </ResponseField>
+  
+  <ResponseField name="base_id" type="string">
+    Multi-tenant isolation key (source of truth from DB)
+  </ResponseField>
+  
+  <ResponseField name="num_vas" type="number | null">
+    Number of virtual assistants
+  </ResponseField>
+  
+  <ResponseField name="status" type="JobStatus">
+    Current job status
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string">
+    ISO 8601 timestamp of creation
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="string | null">
+    ISO 8601 timestamp of last update
+  </ResponseField>
+</ResponseField>
+
+**Example:**
+
+```typescript
+const job = await createScrapingJob({
+  influencer_name: 'John Doe',
+  platform: 'instagram',
+  airtable_base_id: 'appXXXXXXXXXXXXXX',
+  num_vas: 5,
+  status: 'active'
+});
+
+if (job) {
+  console.log('Created job:', job.job_id);
+}
+```
+
+---
+
+### getAllJobs
+
+Retrieve all scraping jobs, ordered by creation date (newest first).
+
+```typescript
+async function getAllJobs(): Promise<ScrapingJob[]>
+```
+
+<ResponseField name="jobs" type="ScrapingJob[]">
+  Array of all scraping jobs, or empty array if none exist
+</ResponseField>
+
+**Example:**
+
+```typescript
+const jobs = await getAllJobs();
+console.log(`Found ${jobs.length} jobs`);
+```
+
+---
+
+### getJobById
+
+Retrieve a single scraping job by its ID.
+
+```typescript
+async function getJobById(jobId: string): Promise<ScrapingJob | null>
+```
+
+<ParamField path="jobId" type="string" required>
+  The unique job identifier (UUID)
+</ParamField>
+
+<ResponseField name="job" type="ScrapingJob | null">
+  The scraping job or `null` if not found
+</ResponseField>
+
+**Example:**
+
+```typescript
+const job = await getJobById('123e4567-e89b-12d3-a456-426614174000');
+if (job) {
+  console.log('Job:', job.influencer_name, job.platform);
+}
+```
+
+---
+
+### getJobsByPlatform
+
+Retrieve all jobs for a specific platform.
+
+```typescript
+async function getJobsByPlatform(
+  platform: Platform,
+  activeOnly: boolean = false
+): Promise<ScrapingJob[]>
+```
+
+<ParamField path="platform" type="Platform" required>
+  Platform to filter by: `'instagram'` | `'threads'` | `'tiktok'` | `'x'`
+</ParamField>
+
+<ParamField path="activeOnly" type="boolean" default="false">
+  If `true`, only return jobs with `status='active'`
+</ParamField>
+
+<ResponseField name="jobs" type="ScrapingJob[]">
+  Array of matching jobs, ordered by creation date
+</ResponseField>
+
+**Example:**
+
+```typescript
+// Get all Instagram jobs
+const instagramJobs = await getJobsByPlatform('instagram');
+
+// Get only active TikTok jobs
+const activeTikTokJobs = await getJobsByPlatform('tiktok', true);
+```
+
+---
+
+### getJobsByStatus
+
+Retrieve all jobs with a specific status.
+
+```typescript
+async function getJobsByStatus(status: JobStatus): Promise<ScrapingJob[]>
+```
+
+<ParamField path="status" type="JobStatus" required>
+  Status to filter by: `'active'` | `'paused'` | `'archived'`
+</ParamField>
+
+<ResponseField name="jobs" type="ScrapingJob[]">
+  Array of jobs with the specified status
+</ResponseField>
+
+**Example:**
+
+```typescript
+const activeJobs = await getJobsByStatus('active');
+const pausedJobs = await getJobsByStatus('paused');
+```
+
+---
+
+### getActiveJob
+
+Get the active scraping job. Returns the first job with `status='active'`, or the most recent job if none are active.
+
+This is the primary method for determining which `base_id` to use for multi-tenant operations.
+
+```typescript
+async function getActiveJob(): Promise<ScrapingJob | null>
+```
+
+<ResponseField name="job" type="ScrapingJob | null">
+  The active job, or `null` if no jobs exist
+</ResponseField>
+
+**Example:**
+
+```typescript
+const activeJob = await getActiveJob();
+if (activeJob) {
+  console.log('Active job base_id:', activeJob.base_id);
+}
+```
+
+---
+
+### getActiveBaseId
+
+Convenience method that returns just the `base_id` from the active job.
+
+```typescript
+async function getActiveBaseId(): Promise<string | null>
+```
+
+<ResponseField name="baseId" type="string | null">
+  The `base_id` from the active job, or `null` if no job exists
+</ResponseField>
+
+**Example:**
+
+```typescript
+const baseId = await getActiveBaseId();
+if (baseId) {
+  // Use baseId for API calls
+  await apiRequest('/api/scrape-followers', baseId);
+}
+```
+
+---
+
+## Job Updates
+
+### updateJob
+
+Update a scraping job's properties.
+
+```typescript
+async function updateJob(
+  jobId: string,
+  updates: UpdateScrapingJobInput
+): Promise<boolean>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to update
+</ParamField>
+
+<ParamField path="updates" type="UpdateScrapingJobInput" required>
+  Fields to update
+  
+  <ParamField path="updates.influencer_name" type="string">
+    New influencer name
+  </ParamField>
+  
+  <ParamField path="updates.platform" type="Platform">
+    New platform
+  </ParamField>
+  
+  <ParamField path="updates.airtable_base_id" type="string">
+    New Airtable base ID
+  </ParamField>
+  
+  <ParamField path="updates.num_vas" type="number">
+    New number of VAs
+  </ParamField>
+  
+  <ParamField path="updates.status" type="JobStatus">
+    New status
+  </ParamField>
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` if update succeeded, `false` otherwise
+</ResponseField>
+
+**Example:**
+
+```typescript
+const success = await updateJob(jobId, {
+  num_vas: 10,
+  status: 'paused'
+});
+```
+
+---
+
+### updateJobStatus
+
+Update only the status of a job.
+
+```typescript
+async function updateJobStatus(
+  jobId: string,
+  status: JobStatus
+): Promise<boolean>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to update
+</ParamField>
+
+<ParamField path="status" type="JobStatus" required>
+  New status: `'active'` | `'paused'` | `'archived'`
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` if update succeeded, `false` otherwise
+</ResponseField>
+
+**Example:**
+
+```typescript
+await updateJobStatus(jobId, 'archived');
+```
+
+---
+
+### archiveJob
+
+Archive a job (soft delete by setting status to `'archived'`).
+
+```typescript
+async function archiveJob(jobId: string): Promise<boolean>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to archive
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` if archive succeeded
+</ResponseField>
+
+**Example:**
+
+```typescript
+await archiveJob(jobId);
+```
+
+---
+
+### pauseJob
+
+Pause a scraping job.
+
+```typescript
+async function pauseJob(jobId: string): Promise<boolean>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to pause
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` if pause succeeded
+</ResponseField>
+
+**Example:**
+
+```typescript
+await pauseJob(jobId);
+```
+
+---
+
+### activateJob
+
+Activate a scraping job.
+
+```typescript
+async function activateJob(jobId: string): Promise<boolean>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to activate
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` if activation succeeded
+</ResponseField>
+
+**Example:**
+
+```typescript
+await activateJob(jobId);
+```
+
+---
+
+## Job Statistics
+
+### getJobStatisticsByBaseId
+
+Get job statistics by `base_id`. Queries `global_usernames` and `daily_assignments` using `base_id` for accurate multi-tenant counts.
+
+**This is the recommended method for getting statistics.**
+
+```typescript
+async function getJobStatisticsByBaseId(
+  baseId: string
+): Promise<JobStatistics | null>
+```
+
+<ParamField path="baseId" type="string" required>
+  The base ID to query statistics for
+</ParamField>
+
+<ResponseField name="statistics" type="JobStatistics | null">
+  Job statistics or `null` if query failed
+  
+  <ResponseField name="totalUsernames" type="number">
+    Total number of usernames in the global pool
+  </ResponseField>
+  
+  <ResponseField name="usedUsernames" type="number">
+    Number of usernames marked as used
+  </ResponseField>
+  
+  <ResponseField name="availableUsernames" type="number">
+    Number of available (unused) usernames
+  </ResponseField>
+  
+  <ResponseField name="totalAssignments" type="number">
+    Total number of daily assignments
+  </ResponseField>
+  
+  <ResponseField name="totalScrapeResults" type="number">
+    Total number of scrape results
+  </ResponseField>
+</ResponseField>
+
+**Example:**
+
+```typescript
+const stats = await getJobStatisticsByBaseId('appXXXXXXXXXXXXXX');
+if (stats) {
+  console.log(`${stats.availableUsernames} / ${stats.totalUsernames} usernames available`);
+}
+```
+
+---
+
+### getJobStatistics
+
+<Warning>
+  **Deprecated:** Use `getJobStatisticsByBaseId` for accurate multi-tenant counts.
+</Warning>
+
+Get job statistics by `job_id`.
+
+```typescript
+async function getJobStatistics(
+  jobId: string
+): Promise<JobStatistics | null>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to query statistics for
+</ParamField>
+
+<ResponseField name="statistics" type="JobStatistics | null">
+  Job statistics (see `getJobStatisticsByBaseId` for fields)
+</ResponseField>
+
+---
+
+### getJobWithStats
+
+Retrieve a job with its statistics included.
+
+```typescript
+async function getJobWithStats(
+  jobId: string
+): Promise<ScrapingJobWithStats | null>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to retrieve
+</ParamField>
+
+<ResponseField name="jobWithStats" type="ScrapingJobWithStats | null">
+  Job with embedded statistics
+  
+  <ResponseField name="stats" type="JobStatistics">
+    Embedded job statistics (see `getJobStatisticsByBaseId` for fields)
+  </ResponseField>
+</ResponseField>
+
+**Example:**
+
+```typescript
+const jobWithStats = await getJobWithStats(jobId);
+if (jobWithStats) {
+  console.log(`Job: ${jobWithStats.influencer_name}`);
+  console.log(`Usernames: ${jobWithStats.stats.totalUsernames}`);
+}
+```
+
+---
+
+### getAllJobsWithStats
+
+Retrieve all jobs with their statistics included.
+
+```typescript
+async function getAllJobsWithStats(): Promise<ScrapingJobWithStats[]>
+```
+
+<ResponseField name="jobsWithStats" type="ScrapingJobWithStats[]">
+  Array of all jobs with embedded statistics
+</ResponseField>
+
+**Example:**
+
+```typescript
+const jobsWithStats = await getAllJobsWithStats();
+jobsWithStats.forEach(job => {
+  console.log(`${job.influencer_name}: ${job.stats.totalUsernames} usernames`);
+});
+```
+
+---
+
+## Usernames & Assignments
+
+### getJobUsernames
+
+Retrieve usernames associated with a job.
+
+```typescript
+async function getJobUsernames(
+  jobId: string,
+  onlyAvailable: boolean = false
+): Promise<GlobalUsername[]>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to query
+</ParamField>
+
+<ParamField path="onlyAvailable" type="boolean" default="false">
+  If `true`, only return unused usernames
+</ParamField>
+
+<ResponseField name="usernames" type="GlobalUsername[]">
+  Array of username records
+  
+  <ResponseField name="id" type="string">
+    Unique username identifier
+  </ResponseField>
+  
+  <ResponseField name="username" type="string">
+    The username
+  </ResponseField>
+  
+  <ResponseField name="full_name" type="string | null">
+    User's full name
+  </ResponseField>
+  
+  <ResponseField name="used" type="boolean">
+    Whether username has been used
+  </ResponseField>
+  
+  <ResponseField name="used_at" type="string | null">
+    ISO 8601 timestamp when used
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string">
+    ISO 8601 timestamp of creation
+  </ResponseField>
+  
+  <ResponseField name="job_id" type="string | null">
+    Associated job ID
+  </ResponseField>
+</ResponseField>
+
+**Example:**
+
+```typescript
+// Get all usernames
+const allUsernames = await getJobUsernames(jobId);
+
+// Get only available usernames
+const availableUsernames = await getJobUsernames(jobId, true);
+```
+
+---
+
+### getJobAssignments
+
+Retrieve daily assignments for a job.
+
+```typescript
+async function getJobAssignments(
+  jobId: string
+): Promise<DailyAssignment[]>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to query
+</ParamField>
+
+<ResponseField name="assignments" type="DailyAssignment[]">
+  Array of assignment records
+  
+  <ResponseField name="assignment_id" type="string">
+    Unique assignment identifier
+  </ResponseField>
+  
+  <ResponseField name="campaign_id" type="string">
+    Associated campaign ID
+  </ResponseField>
+  
+  <ResponseField name="va_table_number" type="number">
+    Virtual assistant table number
+  </ResponseField>
+  
+  <ResponseField name="position" type="number">
+    Position in assignment queue
+  </ResponseField>
+  
+  <ResponseField name="id" type="string">
+    User ID
+  </ResponseField>
+  
+  <ResponseField name="username" type="string">
+    Username
+  </ResponseField>
+  
+  <ResponseField name="full_name" type="string | null">
+    User's full name
+  </ResponseField>
+  
+  <ResponseField name="assigned_at" type="string">
+    ISO 8601 timestamp of assignment
+  </ResponseField>
+  
+  <ResponseField name="status" type="'pending' | 'followed' | 'unfollow' | 'completed'">
+    Assignment status
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="string | null">
+    ISO 8601 timestamp of last update
+  </ResponseField>
+  
+  <ResponseField name="job_id" type="string | null">
+    Associated job ID
+  </ResponseField>
+</ResponseField>
+
+**Example:**
+
+```typescript
+const assignments = await getJobAssignments(jobId);
+console.log(`Found ${assignments.length} assignments`);
+```
+
+---
+
+### addUsernamesToJob
+
+Add usernames to a job's global username pool.
+
+```typescript
+async function addUsernamesToJob(
+  jobId: string,
+  baseId: string,
+  usernames: Array<{
+    id: string;
+    username: string;
+    full_name?: string;
+  }>
+): Promise<boolean>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to add usernames to
+</ParamField>
+
+<ParamField path="baseId" type="string" required>
+  The base_id for multi-tenant isolation
+</ParamField>
+
+<ParamField path="usernames" type="Array<object>" required>
+  Array of username objects to add
+  
+  <ParamField path="usernames[].id" type="string" required>
+    Unique user identifier
+  </ParamField>
+  
+  <ParamField path="usernames[].username" type="string" required>
+    The username
+  </ParamField>
+  
+  <ParamField path="usernames[].full_name" type="string">
+    User's full name (optional)
+  </ParamField>
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` if usernames were added successfully
+</ResponseField>
+
+**Example:**
+
+```typescript
+const baseId = await getActiveBaseId();
+if (baseId) {
+  await addUsernamesToJob(jobId, baseId, [
+    { id: '123', username: 'user1', full_name: 'User One' },
+    { id: '456', username: 'user2', full_name: 'User Two' }
+  ]);
+}
+```
+
+---
+
+### createJobAssignments
+
+Create daily assignments for a job.
+
+```typescript
+async function createJobAssignments(
+  jobId: string,
+  campaignId: string,
+  baseId: string,
+  assignments: Array<{
+    id: string;
+    username: string;
+    full_name?: string;
+    va_table_number: number;
+    position: number;
+  }>
+): Promise<boolean>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to create assignments for
+</ParamField>
+
+<ParamField path="campaignId" type="string" required>
+  The campaign ID
+</ParamField>
+
+<ParamField path="baseId" type="string" required>
+  The base_id for multi-tenant isolation
+</ParamField>
+
+<ParamField path="assignments" type="Array<object>" required>
+  Array of assignment objects
+  
+  <ParamField path="assignments[].id" type="string" required>
+    User ID
+  </ParamField>
+  
+  <ParamField path="assignments[].username" type="string" required>
+    Username
+  </ParamField>
+  
+  <ParamField path="assignments[].full_name" type="string">
+    User's full name (optional)
+  </ParamField>
+  
+  <ParamField path="assignments[].va_table_number" type="number" required>
+    Virtual assistant table number
+  </ParamField>
+  
+  <ParamField path="assignments[].position" type="number" required>
+    Position in queue
+  </ParamField>
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` if assignments were created successfully
+</ResponseField>
+
+**Example:**
+
+```typescript
+const baseId = await getActiveBaseId();
+if (baseId) {
+  await createJobAssignments(jobId, campaignId, baseId, [
+    {
+      id: '123',
+      username: 'user1',
+      full_name: 'User One',
+      va_table_number: 1,
+      position: 0
+    }
+  ]);
+}
+```
+
+---
+
+## Search
+
+### searchJobsByInfluencer
+
+Search for jobs by influencer name (case-insensitive partial match).
+
+```typescript
+async function searchJobsByInfluencer(
+  searchTerm: string
+): Promise<ScrapingJob[]>
+```
+
+<ParamField path="searchTerm" type="string" required>
+  Search term to match against influencer names
+</ParamField>
+
+<ResponseField name="jobs" type="ScrapingJob[]">
+  Array of matching jobs
+</ResponseField>
+
+**Example:**
+
+```typescript
+const results = await searchJobsByInfluencer('john');
+// Matches: "John Doe", "Johnny Smith", etc.
+```
+
+---
+
+## Type Definitions
+
+### Platform
+
+```typescript
+type Platform = 'instagram' | 'threads' | 'tiktok' | 'x';
+```
+
+### JobStatus
+
+```typescript
+type JobStatus = 'active' | 'paused' | 'archived';
+```
+
+### ScrapingJob
+
+```typescript
+interface ScrapingJob {
+  job_id: string;
+  influencer_name: string;
+  platform: Platform;
+  airtable_base_id: string;
+  base_id: string; // Multi-tenant isolation key (source of truth from DB)
+  num_vas: number | null;
+  status: JobStatus;
+  created_at: string;
+  updated_at: string | null;
+}
+```
+
+### CreateScrapingJobInput
+
+```typescript
+interface CreateScrapingJobInput {
+  influencer_name: string;
+  platform: Platform;
+  airtable_base_id: string;
+  num_vas?: number;
+  status?: JobStatus;
+}
+```
+
+### UpdateScrapingJobInput
+
+```typescript
+interface UpdateScrapingJobInput {
+  influencer_name?: string;
+  platform?: Platform;
+  airtable_base_id?: string;
+  num_vas?: number;
+  status?: JobStatus;
+}
+```
+
+### JobStatistics
+
+```typescript
+interface JobStatistics {
+  totalUsernames: number;
+  usedUsernames: number;
+  availableUsernames: number;
+  totalAssignments: number;
+  totalScrapeResults: number;
+}
+```
+
+### ScrapingJobWithStats
+
+```typescript
+interface ScrapingJobWithStats extends ScrapingJob {
+  stats: JobStatistics;
+}
+```
+
+### GlobalUsername
+
+```typescript
+interface GlobalUsername {
+  id: string;
+  username: string;
+  full_name: string | null;
+  used_at: string | null;
+  used: boolean;
+  created_at: string;
+  job_id: string | null; // References scraping_jobs
+}
+```
+
+### DailyAssignment
+
+```typescript
+interface DailyAssignment {
+  assignment_id: string;
+  campaign_id: string;
+  va_table_number: number;
+  position: number;
+  id: string;
+  username: string;
+  full_name: string | null;
+  assigned_at: string;
+  status: 'pending' | 'followed' | 'unfollow' | 'completed';
+  updated_at: string | null;
+  job_id: string | null; // References scraping_jobs
+}
+```

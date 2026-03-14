@@ -1,0 +1,593 @@
+---
+title: "Installation"
+description: "Set up your development environment and configure Click Creators Scraper"
+---
+
+## Prerequisites
+
+Before installing Click Creators Scraper, ensure you have the following:
+
+<CardGroup cols={2}>
+  <Card title="Node.js 18+" icon="node-js">
+    Required for running the Next.js frontend
+  </Card>
+  <Card title="Python 3.9+" icon="python">
+    Required for the Flask backend API
+  </Card>
+  <Card title="Supabase Account" icon="database">
+    PostgreSQL database with Row Level Security
+  </Card>
+  <Card title="Apify Account" icon="cloud">
+    Instagram scraping API (requires credits)
+  </Card>
+  <Card title="Airtable Account" icon="table">
+    VA workspace and distribution tables
+  </Card>
+  <Card title="Git" icon="git">
+    For cloning the repository
+  </Card>
+</CardGroup>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the Repository">
+    Clone the project repository to your local machine:
+
+    ```bash
+    git clone https://github.com/AI-Venture-Studio/Click-Creators-Scraper-Client.git
+    cd Click-Creators-Scraper-Client
+    ```
+
+    <Tip>
+      The project uses a monorepo structure. The frontend (Next.js) is in the root directory.
+    </Tip>
+  </Step>
+
+  <Step title="Install Frontend Dependencies">
+    Install Node.js dependencies using npm:
+
+    ```bash
+    npm install
+    ```
+
+    **Key dependencies installed:**
+    - Next.js 14.2.33
+    - React 18
+    - TypeScript 5
+    - Tailwind CSS 3.4
+    - ShadCN UI components
+    - Supabase client 2.58
+
+    <CodeGroup>
+    ```json package.json (excerpt)
+    {
+      "dependencies": {
+        "next": "^14.2.33",
+        "react": "^18.2.0",
+        "@supabase/supabase-js": "^2.58.0",
+        "tailwindcss": "^3.4.17",
+        "typescript": "^5"
+      }
+    }
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Set Up Environment Variables">
+    Create a `.env.local` file in the project root:
+
+    ```bash
+    touch .env.local
+    ```
+
+    Add the following environment variables:
+
+    ```bash .env.local
+    # App Configuration
+    NEXT_PUBLIC_APP_URL=http://localhost:3000
+    NEXT_PUBLIC_API_URL=http://localhost:5001
+
+    # Supabase Configuration
+    NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+
+    # Authentication Credentials
+    NEXT_PUBLIC_LOGIN_USERNAME=your-username
+    NEXT_PUBLIC_LOGIN_PASSWORD=your-password
+    NEXT_PUBLIC_LOGIN_OTP=123456
+
+    # Campaign Configuration
+    NEXT_PUBLIC_PROFILES_PER_TABLE=180
+    NEXT_PUBLIC_DAILY_SELECTION_TARGET=14400
+
+    # Source Profiles Management
+    NEXT_PUBLIC_DELETE_PASSWORD=delete123
+    ```
+
+    <Warning>
+      Never commit `.env.local` to version control. It contains sensitive credentials.
+    </Warning>
+
+    <Accordion title="Where to find these values">
+      **Supabase:**
+      1. Go to [Supabase Dashboard](https://app.supabase.com)
+      2. Select your project
+      3. Click Settings → API
+      4. Copy Project URL and anon/public key
+
+      **Authentication:**
+      - Set your own username, password, and 6-digit OTP
+      - These are used for basic authentication at `/callum`
+
+      **Campaign Settings:**
+      - `PROFILES_PER_TABLE`: Default profiles per VA (usually 180)
+      - `DAILY_SELECTION_TARGET`: Total daily target (80 VAs × 180 = 14,400)
+    </Accordion>
+  </Step>
+
+  <Step title="Configure Supabase Database">
+    Set up your Supabase database tables and Row Level Security policies.
+
+    <Tabs>
+      <Tab title="Using SQL Editor">
+        Copy and run the following SQL in your Supabase SQL Editor:
+
+        ```sql Database Schema
+        -- 1. Source Profiles Table
+        CREATE TABLE source_profiles (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          username TEXT NOT NULL,
+          base_id TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(username, base_id)
+        );
+
+        -- 2. Scraping Jobs Table (Multi-tenant)
+        CREATE TABLE scraping_jobs (
+          job_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          influencer_name TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          airtable_base_id TEXT,
+          base_id TEXT NOT NULL,
+          num_vas INTEGER,
+          status TEXT DEFAULT 'active',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- 3. Raw Scraped Profiles Table
+        CREATE TABLE raw_scraped_profiles (
+          id TEXT PRIMARY KEY,
+          username TEXT,
+          full_name TEXT,
+          follower_count INTEGER,
+          following_count INTEGER,
+          post_count INTEGER,
+          is_verified BOOLEAN,
+          is_private BOOLEAN,
+          biography TEXT,
+          url TEXT,
+          detected_gender TEXT,
+          base_id TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- 4. Global Usernames Table (Deduplicated)
+        CREATE TABLE global_usernames (
+          id TEXT,
+          username TEXT NOT NULL,
+          full_name TEXT,
+          used BOOLEAN DEFAULT FALSE,
+          base_id TEXT NOT NULL,
+          job_id UUID REFERENCES scraping_jobs(job_id),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          PRIMARY KEY (username, base_id)
+        );
+
+        -- 5. Campaigns Table
+        CREATE TABLE campaigns (
+          campaign_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          campaign_date DATE NOT NULL,
+          total_assigned INTEGER NOT NULL,
+          status TEXT CHECK (status IN ('pending', 'success', 'failed')),
+          base_id TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- 6. Daily Assignments Table
+        CREATE TABLE daily_assignments (
+          assignment_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          campaign_id UUID REFERENCES campaigns(campaign_id),
+          id TEXT,
+          username TEXT NOT NULL,
+          full_name TEXT,
+          va_table_number INTEGER NOT NULL,
+          position INTEGER,
+          status TEXT DEFAULT 'pending',
+          base_id TEXT NOT NULL,
+          job_id UUID REFERENCES scraping_jobs(job_id),
+          assigned_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- 7. Scrape Results Table
+        CREATE TABLE scrape_results (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          scraping_job_id UUID REFERENCES scraping_jobs(job_id),
+          base_id TEXT NOT NULL,
+          total_scraped INTEGER,
+          total_filtered INTEGER,
+          platform TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- Create indexes for performance
+        CREATE INDEX idx_global_usernames_base_id ON global_usernames(base_id);
+        CREATE INDEX idx_global_usernames_used ON global_usernames(used);
+        CREATE INDEX idx_daily_assignments_base_id ON daily_assignments(base_id);
+        CREATE INDEX idx_campaigns_base_id ON campaigns(base_id);
+        CREATE INDEX idx_scraping_jobs_base_id ON scraping_jobs(base_id);
+        ```
+      </Tab>
+
+      <Tab title="Row Level Security (RLS)">
+        Enable RLS for multi-tenant data isolation:
+
+        ```sql RLS Policies
+        -- Enable RLS on all tables
+        ALTER TABLE source_profiles ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE scraping_jobs ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE global_usernames ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE daily_assignments ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE raw_scraped_profiles ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE scrape_results ENABLE ROW LEVEL SECURITY;
+
+        -- Create RLS policies (example for global_usernames)
+        CREATE POLICY "Users can view their own base usernames"
+          ON global_usernames
+          FOR SELECT
+          USING (
+            base_id = current_setting('request.headers')::json->>'x-base-id'
+          );
+
+        CREATE POLICY "Users can insert their own base usernames"
+          ON global_usernames
+          FOR INSERT
+          WITH CHECK (
+            base_id = current_setting('request.headers')::json->>'x-base-id'
+          );
+
+        -- Repeat similar policies for other tables
+        ```
+
+        <Note>
+          RLS policies use the `x-base-id` header to filter data by tenant. This is automatically set by the `createSupabaseClientWithContext()` function.
+        </Note>
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Set Up Backend API">
+    Configure the Flask backend for API endpoints.
+
+    <Note>
+      The backend code is typically in a separate `server/` directory. Check with your repository structure.
+    </Note>
+
+    Create a backend `.env` file:
+
+    ```bash Backend .env
+    # Supabase
+    SUPABASE_URL=https://your-project.supabase.co
+    SUPABASE_KEY=your-service-role-key
+
+    # Apify (Instagram Scraper)
+    APIFY_API_KEY=your-apify-key
+    APIFY_ACTOR_ID=your-actor-id
+
+    # Airtable
+    AIRTABLE_API_KEY=your-airtable-key
+    AIRTABLE_BASE_ID=your-base-id
+
+    # Gender Detection API (optional)
+    GENDER_API_KEY=your-gender-api-key
+
+    # Flask Configuration
+    FLASK_ENV=development
+    PORT=5001
+    ```
+
+    **Install Python dependencies:**
+
+    ```bash
+    cd server  # or wherever your Flask app is
+    pip install -r requirements.txt
+    ```
+
+    <Accordion title="Required Python packages">
+      - Flask
+      - Flask-CORS
+      - supabase-py
+      - apify-client
+      - pyairtable
+      - python-dotenv
+      - requests
+    </Accordion>
+  </Step>
+
+  <Step title="Run Development Servers">
+    Start both the frontend and backend servers:
+
+    <Tabs>
+      <Tab title="Frontend (Next.js)">
+        ```bash
+        npm run dev
+        ```
+
+        The frontend will be available at:
+        ```
+        http://localhost:3000
+        ```
+
+        **Available pages:**
+        - `/callum` - Login page
+        - `/configure` - Job creation
+        - `/callum-dashboard` - Main dashboard
+        - `/instagram-jobs` - Instagram jobs list
+        - `/tiktok-jobs` - TikTok jobs list
+        - `/threads-jobs` - Threads jobs list
+        - `/x-jobs` - X (Twitter) jobs list
+      </Tab>
+
+      <Tab title="Backend (Flask)">
+        ```bash
+        cd server
+        python app.py
+        ```
+
+        The backend API will run on:
+        ```
+        http://localhost:5001
+        ```
+
+        **API endpoints:**
+        - `POST /api/scrape-followers` - Scrape followers
+        - `POST /api/ingest` - Ingest profiles
+        - `POST /api/daily-selection` - Create campaign
+        - `POST /api/distribute/<campaign_id>` - Distribute to VAs
+        - `POST /api/airtable-sync/<campaign_id>` - Sync to Airtable
+        - `POST /api/cleanup` - Cleanup old campaigns
+      </Tab>
+
+      <Tab title="Run Both">
+        Use the combined script:
+
+        ```bash
+        npm run dev:all
+        ```
+
+        This starts both frontend and backend concurrently.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Verify Installation">
+    Test that everything is working:
+
+    <Steps>
+      <Step title="Check Frontend">
+        Open `http://localhost:3000/callum` and verify:
+        - Login page loads
+        - You can enter credentials
+        - No console errors
+      </Step>
+
+      <Step title="Check Backend">
+        Test API health:
+
+        ```bash
+        curl http://localhost:5001/health
+        ```
+
+        Should return:
+        ```json
+        {
+          "status": "ok",
+          "timestamp": "2025-10-23T12:00:00Z"
+        }
+        ```
+      </Step>
+
+      <Step title="Check Supabase Connection">
+        In the browser console:
+
+        ```javascript
+        // Test Supabase client
+        import { supabase } from '@/lib/supabase'
+        const { data, error } = await supabase.from('scraping_jobs').select('count')
+        console.log(data, error)
+        ```
+
+        Should return without errors.
+      </Step>
+    </Steps>
+  </Step>
+</Steps>
+
+## Post-Installation Setup
+
+### Create Airtable Base
+
+Set up your Airtable workspace for VA distribution:
+
+<Steps>
+  <Step title="Create Base">
+    1. Go to [Airtable](https://airtable.com)
+    2. Create a new base
+    3. Name it (e.g., "Click Creators - Instagram")
+  </Step>
+
+  <Step title="Create VA Tables">
+    Create 80 tables named:
+    - Table 1
+    - Table 2
+    - ...
+    - Table 80
+
+    Each table should have these fields:
+    - `ID` (Single line text)
+    - `Username` (Single line text)
+    - `Full Name` (Single line text)
+    - `Position` (Number)
+    - `Status` (Single select: Pending, Contacted, Converted)
+  </Step>
+
+  <Step title="Get Base ID">
+    Copy the base URL:
+    ```
+    https://airtable.com/appXXXXXXXXXXXXXX
+    ```
+
+    The part after `/app` is your base ID (`appXXXXXXXXXXXXXX`).
+  </Step>
+</Steps>
+
+### Configure Apify Actor
+
+<Steps>
+  <Step title="Get API Key">
+    1. Go to [Apify Console](https://console.apify.com)
+    2. Click Settings → Integrations
+    3. Copy your API token
+  </Step>
+
+  <Step title="Find Instagram Actor">
+    Use the official Instagram Scraper actor:
+    ```
+    apify/instagram-scraper
+    ```
+
+    Or create your own custom actor.
+  </Step>
+
+  <Step title="Test Actor">
+    Run a test scrape:
+
+    ```bash
+    curl https://api.apify.com/v2/acts/apify~instagram-scraper/runs \
+      -X POST \
+      -H 'Authorization: Bearer YOUR_API_TOKEN' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "startUrls": [{"url": "https://www.instagram.com/therock/"}],
+        "resultsType": "followers",
+        "resultsLimit": 10
+      }'
+    ```
+  </Step>
+</Steps>
+
+## Development Scripts
+
+```bash package.json scripts
+# Development
+npm run dev              # Start Next.js dev server
+npm run dev:all          # Start frontend + backend
+
+# Building
+npm run build            # Build for production
+npm run start            # Start production server
+
+# Code Quality
+npm run lint             # Run ESLint
+npm run lint:fix         # Fix ESLint errors
+npm run type-check       # TypeScript type checking
+
+# Packaging
+npm run build:next       # Build Next.js only
+npm run build:flask      # Package Flask backend
+npm run package          # Build both
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port already in use">
+    **Error:** `Port 3000 is already in use`
+
+    **Solution:**
+    ```bash
+    # Kill process on port 3000
+    lsof -ti:3000 | xargs kill -9
+
+    # Or use a different port
+    PORT=3001 npm run dev
+    ```
+  </Accordion>
+
+  <Accordion title="Supabase connection failed">
+    **Error:** `Cannot connect to Supabase`
+
+    **Checklist:**
+    - Verify `NEXT_PUBLIC_SUPABASE_URL` is correct
+    - Check `NEXT_PUBLIC_SUPABASE_ANON_KEY` is valid
+    - Ensure Supabase project is not paused
+    - Check RLS policies allow anon access
+  </Accordion>
+
+  <Accordion title="Backend API not responding">
+    **Error:** `Failed to connect to API on port 5001`
+
+    **Solutions:**
+    ```bash
+    # Check if backend is running
+    curl http://localhost:5001/health
+
+    # Check Python is installed
+    python --version
+
+    # Reinstall dependencies
+    pip install -r requirements.txt
+
+    # Check environment variables
+    cat server/.env
+    ```
+  </Accordion>
+
+  <Accordion title="TypeScript errors after install">
+    **Solution:**
+    ```bash
+    # Clear cache and reinstall
+    rm -rf .next node_modules package-lock.json
+    npm install
+
+    # Restart TypeScript server in VS Code
+    # Cmd+Shift+P → "TypeScript: Restart TS Server"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Create your first scraping job and campaign
+  </Card>
+
+  <Card title="Authentication" icon="lock" href="/guides/authentication">
+    Learn how authentication works
+  </Card>
+
+  <Card title="Database Schema" icon="database" href="/architecture/database-schema">
+    Explore the database structure
+  </Card>
+
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Browse all API endpoints
+  </Card>
+</CardGroup>
+
+<Note>
+  **Need help?** Review the troubleshooting sections in this guide or check the GitHub repository for support.
+</Note>

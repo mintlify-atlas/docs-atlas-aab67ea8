@@ -1,0 +1,242 @@
+---
+title: CampaignsTable
+description: Component for viewing campaign history and assignment statistics
+---
+
+## Overview
+
+The `CampaignsTable` component displays historical campaigns with:
+
+1. Campaign date and total assigned profiles
+2. Success/failure status indicators
+3. Automatic data refresh when base changes
+4. Error handling and loading states
+
+Located at: `components/campaigns-table.tsx`
+
+## Props
+
+```tsx
+// No props - component uses BaseContext internally
+export function CampaignsTable() {
+  const { baseId, isLoading: isLoadingBase } = useBase()
+  // ...
+}
+```
+
+## Usage Example
+
+```tsx
+import { CampaignsTable } from '@/components/campaigns-table'
+
+function DashboardPage() {
+  const [refreshKey, setRefreshKey] = useState(0)
+  
+  return (
+    <div>
+      <CampaignsTable key={`campaigns-${refreshKey}`} />
+      
+      <Button onClick={() => setRefreshKey(prev => prev + 1)}>
+        Refresh Campaigns
+      </Button>
+    </div>
+  )
+}
+```
+
+## Data Structure
+
+```tsx
+interface Campaign {
+  campaign_id: string
+  campaign_date: string
+  total_assigned: number
+  status: boolean  // true = success, false = failed
+  created_at: string
+}
+```
+
+## Features
+
+### 1. Fetch Campaigns from Database
+
+Automatically loads campaigns when `baseId` is available:
+
+```tsx
+useEffect(() => {
+  if (!isLoadingBase && baseId) {
+    fetchCampaigns()
+  }
+}, [baseId, isLoadingBase])
+
+const fetchCampaigns = async () => {
+  const supabaseWithContext = createSupabaseClientWithContext(baseId)
+  
+  const { data, error } = await supabaseWithContext
+    .from('campaigns')
+    .select('campaign_id, campaign_date, total_assigned, status, created_at')
+    .eq('base_id', baseId)
+    .order('campaign_date', { ascending: false })
+  
+  setCampaigns(data || [])
+}
+```
+
+### 2. Status Indicators
+
+Visual status dots with color coding:
+
+```tsx
+const getStatusDot = (status: boolean) => {
+  const statusColor = status ? "bg-green-500" : "bg-red-500"
+  const statusText = status ? "success" : "failed"
+  
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`h-2 w-2 rounded-full ${statusColor}`} />
+      <span className="capitalize">{statusText}</span>
+    </div>
+  )
+}
+```
+
+- **Green dot** - Distribution completed successfully to all VA tables
+- **Red dot** - Distribution encountered errors
+
+### 3. Date Formatting
+
+```tsx
+const formatDate = (dateString: string) => {
+  return new Date(dateString).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  })
+}
+
+// Example: "Jan 15, 2025"
+```
+
+### 4. State Reset on Job Change
+
+Resets component state when switching between jobs:
+
+```tsx
+useResetOnChange(baseId, () => {
+  console.log('[CampaignsTable] Resetting state due to baseId change')
+  setCampaigns([])
+  setIsLoading(true)
+  setError(null)
+}, { skipInitial: true })
+```
+
+### 5. Loading State
+
+Shows skeleton placeholders while loading:
+
+```tsx
+if (isLoading) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Campaigns</CardTitle>
+        <CardDescription>Loading campaign data...</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+```
+
+### 6. Error Handling
+
+```tsx
+if (error) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Campaigns</CardTitle>
+        <CardDescription>Failed to load campaign data</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-2 text-destructive">
+          <AlertCircle className="h-4 w-4" />
+          <p className="text-sm">{error}</p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+```
+
+### 7. Empty State
+
+```tsx
+{campaigns.length === 0 ? (
+  <tr>
+    <td colSpan={3} className="p-8 text-center text-muted-foreground">
+      No campaigns found
+    </td>
+  </tr>
+) : (
+  campaigns.map((campaign) => (
+    <CampaignRow key={campaign.campaign_id} campaign={campaign} />
+  ))
+)}
+```
+
+## UI Components Used
+
+- **Card, CardHeader, CardTitle, CardDescription, CardContent** - Container
+- **Skeleton** - Loading state
+- **AlertCircle** (Lucide icon) - Error indicator
+- **Table elements** - Data display (using native HTML table)
+
+## Database Schema
+
+### campaigns Table
+
+```sql
+CREATE TABLE campaigns (
+  campaign_id UUID PRIMARY KEY,
+  base_id UUID NOT NULL REFERENCES scraping_jobs(base_id),
+  campaign_date DATE NOT NULL,
+  total_assigned INTEGER NOT NULL,
+  status BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+## Real-World Example
+
+From `app/callum-dashboard/page.tsx:230-232`:
+
+```tsx
+<TabsContent value="campaigns">
+  <CampaignsTable 
+    key={`campaigns-${refreshKey}`}
+  />
+</TabsContent>
+```
+
+Used within a Tabs component to switch between scraped accounts and campaign history.
+
+## Component Lifecycle
+
+1. **Mount** - Component loads with initial loading state
+2. **BaseContext resolves** - `baseId` becomes available
+3. **Fetch data** - Query campaigns from Supabase
+4. **Display results** - Show table or error/empty state
+5. **BaseId changes** - State resets and re-fetches
+6. **Unmount** - Cleanup via `usePageReset`
+
+## Related Components
+
+- [PaymentsTable](/components/payments-table) - Trigger new campaigns
+- UsernameStatusCard - View profile availability (displays unused username count)

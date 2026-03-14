@@ -1,0 +1,268 @@
+---
+title: DependenciesCard
+description: Component for configuring source profiles and scraping follower accounts
+---
+
+## Overview
+
+The `DependenciesCard` component allows users to:
+
+1. Add source profiles (usernames or URLs) from Instagram, TikTok, Threads, or X
+2. Configure total scrape count
+3. View estimated scraping costs
+4. Trigger follower scraping with automatic ingestion to database
+5. Load and edit source profiles from database
+
+Located at: `components/dependencies-card.tsx`
+
+## Props
+
+```tsx
+interface DependenciesCardProps {
+  /** Callback when scraping completes successfully */
+  onScrapingComplete?: (accounts: ScrapedAccount[], totalFiltered: number) => void
+  
+  /** Callback when scraping starts */
+  onScrapingStart?: () => void
+  
+  /** Callback when an error occurs */
+  onError?: (error: string) => void
+  
+  /** Platform to scrape from */
+  platform?: 'instagram' | 'tiktok' | 'threads' | 'x'
+}
+
+interface ScrapedAccount {
+  id: string
+  fullName: string
+  username: string
+}
+```
+
+## Usage Example
+
+```tsx
+import { DependenciesCard } from '@/components/dependencies-card'
+import { useState } from 'react'
+
+function DashboardPage() {
+  const [accounts, setAccounts] = useState<ScrapedAccount[]>([])
+  const [totalFiltered, setTotalFiltered] = useState(0)
+  const [isLoading, setIsLoading] = useState(false)
+  
+  return (
+    <DependenciesCard
+      platform="instagram"
+      onScrapingStart={() => setIsLoading(true)}
+      onScrapingComplete={(accounts, total) => {
+        setAccounts(accounts)
+        setTotalFiltered(total)
+        setIsLoading(false)
+      }}
+      onError={(error) => {
+        console.error(error)
+        setIsLoading(false)
+      }}
+    />
+  )
+}
+```
+
+## Features
+
+### 1. Add Source Profiles
+
+Users can add profiles by entering:
+
+- **Username**: `@username` or `username`
+- **Full URL**: `https://instagram.com/username`
+
+The component validates input based on the selected platform:
+
+```tsx
+// Instagram URL pattern
+/https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9._]+)\/?(?:\?.*)?$/
+
+// TikTok URL pattern
+/https?:\/\/(?:www\.)?tiktok\.com\/@([a-zA-Z0-9._]+)\/?(?:\?.*)?$/
+
+// X (Twitter) URL pattern
+/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([a-zA-Z0-9_]+)\/?(?:\?.*)?$/
+
+// Threads URL pattern
+/https?:\/\/(?:www\.)?threads\.net\/@([a-zA-Z0-9._]+)\/?(?:\?.*)?$/
+```
+
+### 2. Cost Estimation
+
+The component calculates estimated costs based on platform rates:
+
+```tsx
+const rates = {
+  instagram: 1.55,  // $1.55 per 1000 profiles
+  tiktok: 2.0,      // $2.00 per 1000 profiles
+  threads: 1.55,    // $1.55 per 1000 profiles
+  x: 0.15           // $0.15 per 1000 profiles
+}
+
+const cost = (totalScrapeCount / 1000) * rate
+```
+
+Displays a warning to check Apify balance before proceeding.
+
+### 3. Load Source Profiles from Database
+
+Users can load previously saved source profiles:
+
+```tsx
+const loadSourceProfiles = async () => {
+  const supabaseWithContext = createSupabaseClientWithContext(baseId)
+  
+  const { data, error } = await supabaseWithContext
+    .from('source_profiles')
+    .select('id, username')
+    .eq('base_id', baseId)
+    .order('username', { ascending: true })
+  
+  // Add to local state without duplicates
+  setAccounts(prev => {
+    const existingUsernames = new Set(prev.map(acc => acc.username))
+    const newAccounts = data.filter(profile => 
+      !existingUsernames.has(profile.username)
+    )
+    return [...prev, ...newAccounts]
+  })
+}
+```
+
+### 4. Scraping Workflow
+
+The component executes a two-step workflow:
+
+**Step 1: Scrape Followers (0% → 50%)**
+
+```tsx
+const result = await apiPost('/api/scrape-followers', baseId, {
+  accounts: usernames,
+  targetGender: 'male',
+  totalScrapeCount: totalScrapeCount,
+  platform: platform
+})
+```
+
+**Step 2: Ingest to Database (50% → 100%)**
+
+```tsx
+const ingestResult = await apiPost('/api/ingest', baseId, {
+  profiles: result.data.accounts.map(account => ({
+    id: account.id,
+    username: account.username,
+    full_name: account.fullName
+  }))
+})
+```
+
+### 5. Progress Tracking
+
+Shows real-time progress with visual indicators:
+
+```tsx
+<Progress value={progress} className="h-2" />
+
+{progressStep === 'scraping' && '📡 Scraping followers...'}
+{progressStep === 'ingesting' && '💾 Saving to database...'}
+{progressStep === 'complete' && '✅ Complete!'}
+```
+
+## State Management
+
+The component uses `useResetOnChange` to reset state when switching between jobs:
+
+```tsx
+useResetOnChange(baseId, () => {
+  setInputValue('')
+  setAccounts([])
+  setTotalScrapeCount(150)
+  setIsScrapingLoading(false)
+  setProgress(0)
+  setProgressStep('idle')
+}, { skipInitial: true })
+```
+
+## UI Components Used
+
+- **Card, CardHeader, CardTitle, CardContent** - Container
+- **Input** - Username/URL input
+- **Button** - Add account, trigger scraping
+- **Avatar, AvatarFallback** - Account display
+- **Progress** - Scraping progress
+- **DropdownMenu** - Load/Edit source profiles
+- **EditSourceProfilesDialog** - Manage source profiles
+
+## API Endpoints
+
+### POST /api/scrape-followers
+
+```tsx
+// Request
+{
+  accounts: string[],
+  targetGender: 'male' | 'female',
+  totalScrapeCount: number,
+  platform: 'instagram' | 'tiktok' | 'threads' | 'x'
+}
+
+// Response
+{
+  success: boolean,
+  data: {
+    accounts: ScrapedAccount[],
+    totalFiltered: number,
+    totalScraped: number,
+    genderDistribution: {
+      male: number,
+      female: number,
+      unknown: number
+    }
+  },
+  error?: string
+}
+```
+
+### POST /api/ingest
+
+```tsx
+// Request
+{
+  profiles: Array<{
+    id: string,
+    username: string,
+    full_name: string
+  }>
+}
+
+// Response
+{
+  success: boolean,
+  added_to_global: number,
+  error?: string
+}
+```
+
+## Real-World Example
+
+From `app/callum-dashboard/page.tsx:206-211`:
+
+```tsx
+<DependenciesCard 
+  onScrapingStart={handleScrapingStart}
+  onScrapingComplete={handleScrapingComplete}
+  onError={handleScrapingError}
+  platform={activeJob?.platform?.toLowerCase() as 'instagram' | 'tiktok' | 'threads' | 'x' || 'instagram'}
+/>
+```
+
+## Related Components
+
+- [PaymentsTable](/components/payments-table) - Display and assign scraped accounts
+- EditSourceProfilesDialog - Dialog component for managing source profiles (add/remove Instagram accounts)

@@ -1,0 +1,214 @@
+---
+title: 'POST /api/scrape-followers'
+description: 'Scrape Instagram followers from source accounts with gender filtering'
+---
+
+## Endpoint
+
+```
+POST /api/scrape-followers
+```
+
+Scrapes Instagram followers from specified source accounts using the Apify Instagram scraper. Applies gender-based filtering to extract only male profiles using name-based detection.
+
+## Request Body
+
+<ParamField body="accounts" type="string[]" required>
+  Array of Instagram usernames to scrape followers from. Usernames should not include the '@' symbol.
+  
+  Example: `["username1", "username2", "username3"]`
+</ParamField>
+
+<ParamField body="targetGender" type="string" required>
+  The target gender to filter profiles by. Currently supports `"male"` for male profile filtering.
+  
+  Default: `"male"`
+</ParamField>
+
+## Response Fields
+
+<ResponseField name="success" type="boolean" required>
+  Indicates whether the scraping operation completed successfully.
+</ResponseField>
+
+<ResponseField name="data" type="object" required>
+  Container object for the scraping results.
+  
+  <ResponseField name="data.accounts" type="array" required>
+    Array of scraped profile objects with detailed information.
+  </ResponseField>
+  
+  <ResponseField name="data.totalScraped" type="number" required>
+    Total number of profiles scraped before gender filtering.
+  </ResponseField>
+  
+  <ResponseField name="data.totalFiltered" type="number" required>
+    Number of profiles remaining after gender filtering (male profiles only).
+  </ResponseField>
+  
+  <ResponseField name="data.genderDistribution" type="object" required>
+    Breakdown of detected genders in the scraped data.
+    
+    <ResponseField name="data.genderDistribution.male" type="number">
+      Number of profiles detected as male.
+    </ResponseField>
+    
+    <ResponseField name="data.genderDistribution.female" type="number">
+      Number of profiles detected as female.
+    </ResponseField>
+    
+    <ResponseField name="data.genderDistribution.unknown" type="number">
+      Number of profiles where gender could not be determined.
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:5001/api/scrape-followers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accounts": ["username1", "username2"],
+    "targetGender": "male"
+  }'
+```
+
+```typescript TypeScript
+const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/scrape-followers`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    accounts: ['username1', 'username2'],
+    targetGender: 'male'
+  })
+});
+
+const data = await response.json();
+```
+
+```python Python
+import requests
+
+url = 'http://localhost:5001/api/scrape-followers'
+payload = {
+    'accounts': ['username1', 'username2'],
+    'targetGender': 'male'
+}
+
+response = requests.post(url, json=payload)
+data = response.json()
+```
+</CodeGroup>
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "accounts": [
+      {
+        "id": "1234567890",
+        "username": "john_doe",
+        "full_name": "John Doe",
+        "follower_count": 1500,
+        "following_count": 800,
+        "post_count": 120,
+        "is_verified": false,
+        "is_private": false,
+        "biography": "Software Engineer | Tech Enthusiast",
+        "url": "https://www.instagram.com/john_doe",
+        "detected_gender": "male"
+      }
+    ],
+    "totalScraped": 1000,
+    "totalFiltered": 450,
+    "genderDistribution": {
+      "male": 450,
+      "female": 400,
+      "unknown": 150
+    }
+  }
+}
+```
+
+## Workflow Integration
+
+This endpoint is the first step in the scraping workflow:
+
+1. **Scraping Phase (10-50%):** Calls Apify Instagram scraper
+2. **Gender Detection:** Applies name-based gender filtering
+3. **Auto-Ingest:** Automatically triggers `/api/ingest` to save profiles
+
+<Note>
+  The frontend automatically triggers the `/api/ingest` endpoint after successful scraping. You don't need to call it manually in the normal workflow.
+</Note>
+
+## Error Responses
+
+<ResponseField name="error" type="string">
+  Error message describing what went wrong.
+</ResponseField>
+
+### Invalid Request
+
+```json
+{
+  "success": false,
+  "error": "Missing required field: accounts"
+}
+```
+
+### Apify Error
+
+```json
+{
+  "success": false,
+  "error": "Apify scraping failed: Invalid API key"
+}
+```
+
+### Instagram Account Not Found
+
+```json
+{
+  "success": false,
+  "error": "Account 'username1' not found or is private"
+}
+```
+
+## Performance Considerations
+
+<Warning>
+  Scraping large follower lists can take significant time:
+  - Small accounts (less than 10K followers): ~2-5 minutes
+  - Medium accounts (10K-100K): ~5-15 minutes
+  - Large accounts (greater than 100K): ~15-30 minutes
+</Warning>
+
+**Apify Rate Limits:**
+- Subject to your Apify account tier
+- Check your Apify dashboard for run quotas
+- Each scrape consumes one Apify actor run
+
+## Gender Detection
+
+The API uses name-based gender detection algorithms to classify profiles:
+
+- **Male:** First name matches male name database
+- **Female:** First name matches female name database
+- **Unknown:** Name not found in database or ambiguous
+
+<Note>
+  Gender detection accuracy depends on the quality of the profile's full name. Private accounts or accounts with non-standard names may be classified as "unknown".
+</Note>
+
+## Next Steps
+
+<Card title="Ingest Profiles" icon="arrow-right" href="/api/ingest">
+  Learn how to save scraped profiles to the database
+</Card>

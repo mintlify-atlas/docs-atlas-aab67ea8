@@ -1,0 +1,516 @@
+---
+title: 'VA Distribution'
+description: 'Profile distribution across 80 VA tables with 180 profiles each'
+icon: 'grid-2'
+---
+
+## Overview
+
+VA Distribution is the algorithm that evenly distributes scraped Instagram profiles across 80 Virtual Assistant (VA) tables, with each VA receiving a configurable number of profiles (default: 180).
+
+<Info>
+**Standard Configuration**: 80 VA tables × 180 profiles = 14,400 total profiles per campaign
+</Info>
+
+## Distribution Algorithm
+
+The distribution uses a round-robin algorithm to ensure even distribution:
+
+```javascript
+function distributeProfiles(profiles, numVAs, profilesPerTable) {
+  const assignments = [];
+  
+  profiles.forEach((profile, index) => {
+    // VA table number: cycles 1-80 repeatedly
+    const vaTableNumber = (index % numVAs) + 1;
+    
+    // Position within that VA's table
+    const position = Math.floor(index / numVAs) + 1;
+    
+    assignments.push({
+      ...profile,
+      va_table_number: vaTableNumber,
+      position: position
+    });
+  });
+  
+  return assignments;
+}
+```
+
+### Distribution Example
+
+Given 14,400 profiles and 80 VAs:
+
+| Profile Index | VA Table | Position | Explanation |
+|---------------|----------|----------|-------------|
+| 0 | 1 | 1 | `(0 % 80) + 1 = 1`, `floor(0 / 80) + 1 = 1` |
+| 1 | 2 | 1 | `(1 % 80) + 1 = 2`, `floor(1 / 80) + 1 = 1` |
+| 79 | 80 | 1 | `(79 % 80) + 1 = 80`, `floor(79 / 80) + 1 = 1` |
+| 80 | 1 | 2 | `(80 % 80) + 1 = 1`, `floor(80 / 80) + 1 = 2` |
+| 14,399 | 80 | 180 | `(14399 % 80) + 1 = 80`, `floor(14399 / 80) + 1 = 180` |
+
+<Check>
+**Even Distribution Guarantee**: Each VA table receives exactly `profilesPerTable` profiles with no remainder.
+</Check>
+
+## Configuration Options
+
+### Fixed Assignment (180 per VA)
+
+The standard configuration assigns 180 profiles to each of 80 VAs.
+
+**UI Flow**:
+1. Click menu on "Extracted Accounts" card
+2. Select "Assign 180 accounts per VA"
+3. System validates 14,400 unused profiles exist
+4. Confirmation dialog appears
+5. Click "Confirm" to proceed
+
+**Validation Check**:
+```typescript
+const { count } = await supabase
+  .from('global_usernames')
+  .select('*', { count: 'exact', head: true })
+  .eq('base_id', baseId)
+  .eq('used', false);
+
+const required = 14400;  // 80 VAs × 180 profiles
+
+if (count < required) {
+  toast({
+    title: "Not enough profiles",
+    description: "Please scrape more profiles before distributing.",
+    variant: "destructive"
+  });
+  return;
+}
+```
+
+Source: `components/payments-table.tsx:199-248`
+
+### Custom Assignment
+
+Customize the number of profiles per VA for specific requirements.
+
+<Steps>
+  <Step title="Open Custom Dialog">
+    Click "Custom VA Assignment..." from the menu.
+    
+    Source: `components/payments-table.tsx:251-254`
+  </Step>
+  
+  <Step title="Enter Profiles per VA">
+    The dialog shows an input field with default value from environment:
+    
+    ```typescript
+    const defaultProfilesPerTable = Number(process.env.NEXT_PUBLIC_PROFILES_PER_TABLE) || 180;
+    ```
+    
+    Enter your desired number (e.g., 100, 200, 250).
+    
+    Source: `components/payments-table.tsx:392-416`
+  </Step>
+  
+  <Step title="Calculate Total">
+    System calculates total profiles needed:
+    
+    ```
+    Total Required = num_vas × profiles_per_table
+    
+    Examples:
+    - 80 VAs × 100 profiles = 8,000 total
+    - 80 VAs × 200 profiles = 16,000 total
+    - 50 VAs × 180 profiles = 9,000 total
+    ```
+  </Step>
+  
+  <Step title="Distribute">
+    System sends custom value to backend:
+    
+    ```typescript
+    await apiPost('/api/distribute/${campaignId}', baseId, {
+      profiles_per_table: customValue
+    });
+    ```
+    
+    Source: `components/payments-table.tsx:136-141`
+  </Step>
+</Steps>
+
+## Database Structure
+
+### daily_assignments Table
+
+Each distributed profile creates a record:
+
+```sql
+CREATE TABLE daily_assignments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  campaign_id UUID REFERENCES campaigns(campaign_id),
+  username TEXT,
+  full_name TEXT,
+  va_table_number INTEGER,  -- 1 to num_vas (typically 80)
+  position INTEGER,         -- 1 to profiles_per_table (typically 180)
+  job_id UUID,
+  base_id TEXT,            -- Multi-tenant isolation
+  status TEXT DEFAULT 'pending',
+  assigned_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### Example Records
+
+```sql
+INSERT INTO daily_assignments VALUES
+  ('uuid-1', 'campaign-123', 'user1', 'User One', 1, 1, 'job-456', 'base-789', 'pending', NOW()),
+  ('uuid-2', 'campaign-123', 'user2', 'User Two', 2, 1, 'job-456', 'base-789', 'pending', NOW()),
+  ...
+  ('uuid-14400', 'campaign-123', 'user14400', 'User 14400', 80, 180, 'job-456', 'base-789', 'pending', NOW());
+```
+
+## Querying Distributions
+
+### Get All Assignments for a VA
+
+```sql
+SELECT username, full_name, position
+FROM daily_assignments
+WHERE campaign_id = 'campaign-123'
+  AND va_table_number = 1
+  AND base_id = 'base-789'
+ORDER BY position ASC;
+```
+
+**Result**: 180 profiles assigned to VA Table 1, ordered by position (1-180).
+
+### Count Profiles per VA
+
+```sql
+SELECT va_table_number, COUNT(*) as profile_count
+FROM daily_assignments
+WHERE campaign_id = 'campaign-123'
+  AND base_id = 'base-789'
+GROUP BY va_table_number
+ORDER BY va_table_number ASC;
+```
+
+**Expected Result**: All VA tables show equal counts (e.g., 180 profiles each).
+
+### Verify Distribution Balance
+
+```sql
+WITH distribution AS (
+  SELECT va_table_number, COUNT(*) as count
+  FROM daily_assignments
+  WHERE campaign_id = 'campaign-123'
+    AND base_id = 'base-789'
+  GROUP BY va_table_number
+)
+SELECT 
+  MIN(count) as min_profiles,
+  MAX(count) as max_profiles,
+  AVG(count) as avg_profiles
+FROM distribution;
+```
+
+**Expected Result**: `min_profiles = max_profiles = avg_profiles = 180`
+
+## API Integration
+
+Distribution happens during Phase 2 of the campaign workflow.
+
+### Distribution Endpoint
+
+**Request**:
+```typescript
+POST /api/distribute/{campaign_id}
+
+Headers:
+  X-Base-ID: {base_id}
+
+Body:
+{
+  "profiles_per_table": 180
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "campaign_id": "campaign-123",
+  "va_tables": 80,
+  "profiles_per_table": 180,
+  "total_distributed": 14400
+}
+```
+
+**Backend Logic** (conceptual Python):
+```python
+@app.route('/api/distribute/<campaign_id>', methods=['POST'])
+def distribute_profiles(campaign_id):
+    base_id = request.headers.get('X-Base-ID')
+    profiles_per_table = request.json.get('profiles_per_table', 180)
+    
+    # Get campaign details
+    campaign = get_campaign(campaign_id, base_id)
+    num_vas = campaign.num_vas
+    
+    # Get selected profiles for this campaign
+    profiles = get_campaign_profiles(campaign_id, base_id)
+    
+    # Distribute profiles
+    assignments = []
+    for index, profile in enumerate(profiles):
+        va_table = (index % num_vas) + 1
+        position = (index // num_vas) + 1
+        
+        assignments.append({
+            'campaign_id': campaign_id,
+            'username': profile.username,
+            'full_name': profile.full_name,
+            'va_table_number': va_table,
+            'position': position,
+            'base_id': base_id
+        })
+    
+    # Insert assignments into database
+    supabase.table('daily_assignments').insert(assignments).execute()
+    
+    return jsonify({
+        'success': True,
+        'campaign_id': campaign_id,
+        'va_tables': num_vas,
+        'profiles_per_table': profiles_per_table,
+        'total_distributed': len(assignments)
+    })
+```
+
+Source: README.md:431-442
+
+## Multi-VA Support
+
+While 80 VAs is the standard, the system supports any number:
+
+### Variable VA Counts
+
+```typescript
+// Job created with 50 VAs
+const job = await createScrapingJob({
+  influencer_name: 'SmallCampaign',
+  platform: 'instagram',
+  num_vas: 50,  // Not 80!
+  airtable_base_id: 'appXXXXXX'
+});
+
+// Distribution adapts automatically
+// 50 VAs × 180 profiles = 9,000 total
+```
+
+**Distribution Adjusts**:
+- VA table numbers: 1 to 50 (not 1 to 80)
+- Each VA still gets 180 profiles
+- Total profiles needed: 9,000 (not 14,400)
+
+### Large Campaigns
+
+```typescript
+// 100 VA campaign
+num_vas: 100
+profiles_per_table: 180
+total_required: 18,000
+
+// Distribution:
+va_table_number: 1 to 100
+positions: 1 to 180
+```
+
+## Airtable Table Structure
+
+After distribution, profiles are synced to Airtable with the same structure:
+
+### VA Table Naming Convention
+
+- **Table 1** through **Table 80**
+- Each table in the Airtable base corresponds to one `va_table_number`
+
+### Airtable Columns
+
+| Column Name | Type | Description |
+|-------------|------|-------------|
+| **ID** | Text | Instagram user ID |
+| **Username** | Text | Instagram handle |
+| **Full Name** | Text | Display name |
+| **Position** | Number | Position within VA's list (1-180) |
+| **Campaign Date** | Date | Date campaign was created |
+| **Status** | Single Select | pending, contacted, completed |
+
+### Sync Process
+
+```typescript
+// For each VA table (1-80)
+for (let tableNum = 1; tableNum <= 80; tableNum++) {
+  const assignments = getAssignmentsForTable(campaignId, tableNum);
+  const tableName = `Table ${tableNum}`;
+  
+  const records = assignments.map(a => ({
+    fields: {
+      'ID': a.id,
+      'Username': a.username,
+      'Full Name': a.full_name,
+      'Position': a.position,
+      'Campaign Date': campaign.campaign_date
+    }
+  }));
+  
+  await airtable.base(baseId).table(tableName).create(records);
+}
+```
+
+Source: README.md:449-455
+
+## Performance Considerations
+
+<CardGroup cols={2}>
+  <Card title="Batch Inserts" icon="layer-group">
+    Assignments are inserted in batches (not individually) to improve database performance.
+  </Card>
+  <Card title="Airtable Rate Limits" icon="gauge">
+    Sync includes delays between table uploads to respect Airtable's 5 requests/second limit.
+  </Card>
+  <Card title="Transaction Safety" icon="shield">
+    Distribution uses database transactions to ensure all-or-nothing assignment.
+  </Card>
+  <Card title="Index Optimization" icon="bolt">
+    Database indexes on `campaign_id`, `base_id`, and `va_table_number` speed up queries.
+  </Card>
+</CardGroup>
+
+## Monitoring Distribution
+
+### Check Distribution Progress
+
+During Phase 2 (Distributing), the UI shows:
+
+```tsx
+{progressStep === 'distributing' && (
+  <div className="space-y-2">
+    <div className="flex items-center justify-between">
+      <span>🎲 Distributing to VA tables...</span>
+      <span>{progress}%</span>
+    </div>
+    <Progress value={progress} />
+  </div>
+)}
+```
+
+Progress updates:
+- **33%**: Distribution started
+- **40%**: Database inserts in progress
+- **66%**: Distribution complete
+
+Source: `components/payments-table.tsx:326-339`
+
+### Verify Distribution Completion
+
+After distribution completes, verify in database:
+
+```sql
+-- Should return 80 (or num_vas)
+SELECT COUNT(DISTINCT va_table_number)
+FROM daily_assignments
+WHERE campaign_id = 'campaign-123'
+  AND base_id = 'base-789';
+
+-- Should return total assigned (e.g., 14400)
+SELECT COUNT(*)
+FROM daily_assignments
+WHERE campaign_id = 'campaign-123'
+  AND base_id = 'base-789';
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Uneven distribution">
+    **Problem**: Some VA tables have more profiles than others
+    
+    **Solutions**:
+    1. Check if total profiles is evenly divisible by `num_vas`
+    2. Verify round-robin algorithm is correctly implemented
+    3. Query database to find unbalanced tables:
+       ```sql
+       SELECT va_table_number, COUNT(*) as count
+       FROM daily_assignments
+       WHERE campaign_id = 'campaign-123'
+       GROUP BY va_table_number
+       HAVING COUNT(*) != 180;
+       ```
+    4. Contact support if using standard 80×180 configuration
+  </Accordion>
+  
+  <Accordion title="Missing VA tables">
+    **Problem**: Distribution skips certain table numbers
+    
+    **Solutions**:
+    1. Verify `num_vas` in job matches expected value:
+       ```sql
+       SELECT num_vas FROM scraping_jobs WHERE job_id = 'job-123';
+       ```
+    2. Check distribution logic isn't skipping indices
+    3. Ensure no gaps in profile selection before distribution
+  </Accordion>
+  
+  <Accordion title="Position numbers incorrect">
+    **Problem**: Position values don't increment correctly (1, 2, 3...)
+    
+    **Solutions**:
+    1. Verify position calculation: `floor(index / num_vas) + 1`
+    2. Check that profiles are processed in order (index 0, 1, 2...)
+    3. Query for position anomalies:
+       ```sql
+       SELECT va_table_number, MIN(position), MAX(position)
+       FROM daily_assignments
+       WHERE campaign_id = 'campaign-123'
+       GROUP BY va_table_number;
+       ```
+  </Accordion>
+  
+  <Accordion title="Distribution failed error">
+    **Problem**: Phase 2 fails with distribution error
+    
+    **Solutions**:
+    1. Check backend logs for specific error messages
+    2. Verify database connection is stable
+    3. Ensure `campaign_id` was created successfully in Phase 1
+    4. Check that profiles exist for the campaign:
+       ```sql
+       SELECT COUNT(*) FROM global_usernames
+       WHERE used = true AND base_id = 'base-789';
+       ```
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Standard Configuration" icon="star">
+    Stick with 80 VAs × 180 profiles unless you have specific requirements.
+  </Card>
+  <Card title="Validate Before Distribution" icon="check-circle">
+    Always verify sufficient unused profiles exist before starting assignment.
+  </Card>
+  <Card title="Monitor Progress" icon="eye">
+    Watch the progress bar during distribution - it should complete in seconds.
+  </Card>
+  <Card title="Verify After Sync" icon="list-check">
+    Check a few Airtable tables manually to confirm profiles were synced correctly.
+  </Card>
+</CardGroup>
+
+## Related Pages
+
+- [Campaign Management](/features/campaign-management) - Full campaign workflow including distribution
+- [Airtable Sync](/features/airtable-sync) - How distributed profiles are synced to Airtable
+- [Scraping Jobs](/features/scraping-jobs) - Configure `num_vas` when creating jobs

@@ -1,80 +1,264 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get up and running with Click Creators Scraper in 5 minutes"
+icon: "rocket"
 ---
 
-## Get started in three steps
+Get your first scraping job and campaign running in just 5 minutes.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, make sure you have completed the [installation guide](/installation) and have:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+- ✅ Next.js application running (`npm run dev`)
+- ✅ Backend Flask API running (`python app.py`)
+- ✅ Supabase database configured
+- ✅ Apify API key set up
+- ✅ Airtable base created
 
-### Step 2: Deploy your changes
+## Step 1: Login
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+Navigate to the authentication page and log in:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```bash
+http://localhost:3000/callum
+```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Enter your credentials from the environment variables:
 
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+<Steps>
+  <Step title="Enter Username">
+    Username from `NEXT_PUBLIC_USERNAME` environment variable
+  </Step>
+  <Step title="Enter Password">
+    Password from `NEXT_PUBLIC_PASSWORD` environment variable
+  </Step>
+  <Step title="Enter OTP">
+    OTP code from `NEXT_PUBLIC_OTP` environment variable
+  </Step>
+</Steps>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  These credentials are configured in your `.env.local` file. See the [authentication guide](/guides/authentication) for details.
+</Note>
+
+## Step 2: Create Your First Scraping Job
+
+After logging in, navigate to the Configure page:
+
+```bash
+http://localhost:3000/configure
+```
+
+<Steps>
+  <Step title="Enter Influencer Name">
+    Enter the name of the influencer whose followers you want to scrape (e.g., "Nike")
+  </Step>
+  <Step title="Select Platform">
+    Choose Instagram (TikTok, Threads, and X coming soon)
+  </Step>
+  <Step title="Set Number of VAs">
+    Enter how many VAs you want to distribute to (e.g., 80)
+  </Step>
+  <Step title="Click Create Job">
+    Submit the form to create the scraping job
+  </Step>
+</Steps>
+
+### Airtable Base Linking
+
+After creating the job, you'll be prompted to link an Airtable base:
+
+1. Paste your Airtable base URL (format: `https://airtable.com/app...`)
+2. The system will extract the `base_id` automatically
+3. Progress dialog shows VA table creation (takes ~3 seconds)
+4. Redirects to job dashboard when complete
+
+## Step 3: Add Source Profiles
+
+In the dashboard, use the **Dependencies Card** to add Instagram accounts to scrape from:
+
+<Tabs>
+  <Tab title="Manual Entry">
+    1. Click "Edit Source Profiles" button
+    2. Enter Instagram username or full URL
+    3. Press Enter or click the + button
+    4. Profile is saved to `source_profiles` table
+  </Tab>
+  <Tab title="Load from Database">
+    1. Click "Load from DB" button
+    2. Loads all previously saved source profiles
+    3. Displays in a list with remove options
+  </Tab>
+</Tabs>
+
+**Example usernames:**
+- `nike` 
+- `https://www.instagram.com/nike/`
+- `cristiano`
+- `therock`
+
+<Note>
+  You can add multiple source accounts. The scraper will extract followers from all of them.
+</Note>
+
+## Step 4: Run Scraping
+
+Click the **"Find Accounts"** button in the Dependencies Card to start scraping:
+
+<Steps>
+  <Step title="Scraping Phase (10-50%)">
+    - Calls Apify Instagram scraper
+    - Extracts followers from all source accounts
+    - Applies gender detection filter (male profiles only)
+    - Takes 2-30 minutes depending on account size
+  </Step>
+  <Step title="Ingesting Phase (60-80%)">
+    - Automatically triggered after scraping completes
+    - Saves profiles to `raw_scraped_profiles` table
+    - Deduplicates in `global_usernames` table
+    - Updates base_id for multi-tenant isolation
+  </Step>
+  <Step title="Complete (100%)">
+    - Shows success message
+    - Updates username count in dashboard
+    - Profiles are now available for campaigns
+  </Step>
+</Steps>
+
+**Expected Results:**
+- Total scraped: 500-5,000 profiles (depending on source account size)
+- After gender filtering: ~40-60% male profiles
+- Database storage: Both raw data and deduplicated usernames
+
+## Step 5: Create Campaign & Assign to VAs
+
+Once you have at least 14,400 profiles, click **"Assign to VAs"** in the Extracted Accounts card:
+
+<Tabs>
+  <Tab title="Fixed Assignment (180 per VA)">
+    Select "Assign 180 accounts per VA" from the menu:
+
+    1. **Validation**: System checks for 14,400 available profiles
+    2. **Campaign Creation**: Creates campaign with current date
+    3. **Daily Selection**: Selects 14,400 unused profiles
+    4. **VA Distribution**: Distributes to 80 VA tables (180 each)
+    5. **Airtable Sync**: Pushes profiles to Airtable
+    6. **Duration**: ~20-30 seconds total
+  </Tab>
+  <Tab title="Custom Assignment">
+    Enter a custom number of profiles per VA:
+
+    1. Opens dialog with input field
+    2. Enter desired profiles per VA (e.g., 100)
+    3. System calculates: `total = numVAs * profilesPerVA`
+    4. Same workflow as fixed assignment
+    5. Example: 80 VAs × 100 profiles = 8,000 total
+  </Tab>
+</Tabs>
+
+### Campaign Progress Tracking
+
+Watch the progress bar as your campaign is created:
+
+- **0-33%**: Creating campaign & selecting profiles
+- **33-66%**: Distributing to VA tables
+- **66-100%**: Syncing to Airtable
+
+<Note>
+  Progress persists across page navigation using `AssignmentProgressContext`.
+</Note>
+
+## Step 6: View Results
+
+After the campaign completes:
+
+### In the Application
+
+1. **Campaigns Table**: View campaign history with status indicators
+   - 🟢 Green = Success
+   - 🔴 Red = Failed
+   - ⚪ Grey = Pending
+
+2. **Extracted Accounts**: Updated with used profile counts
+
+3. **Job Statistics**: Shows total, used, and available usernames
+
+### In Airtable
+
+1. Open your linked Airtable base
+2. Navigate to VA tables (Table 1, Table 2, ..., Table 80)
+3. Each table contains 180 profiles with fields:
+   - Username
+   - Full Name
+   - Position
+   - Status (Pending → Followed → Unfollow → Completed)
+
+<Check>
+  **Success!** You've completed your first scraping job and campaign. VAs can now access profiles in Airtable.
+</Check>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Insufficient profiles error">
+    **Problem**: Campaign creation fails with "Not enough available profiles"
+    
+    **Solution**: 
+    - Check available username count
+    - Run more scraping to add profiles
+    - Query: `SELECT COUNT(*) FROM global_usernames WHERE used = false AND base_id = 'your-base-id'`
+  </Accordion>
+  
+  <Accordion title="Scraping takes too long">
+    **Problem**: Scraping phase stuck at 30%
+    
+    **Solution**:
+    - Check Apify dashboard for actor run status
+    - Verify Apify API key is valid
+    - Large accounts (>100K followers) can take 15-30 minutes
+  </Accordion>
+  
+  <Accordion title="Airtable sync fails">
+    **Problem**: Campaign stuck at 80%
+    
+    **Solution**:
+    - Verify Airtable API key is valid
+    - Check base_id matches your Airtable base
+    - Ensure VA tables exist (Table 1 - Table 80)
+    - Check Airtable API rate limits
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Create More Jobs" icon="plus" href="/guides/creating-jobs">
+    Set up jobs for different influencers and platforms
+  </Card>
+  <Card title="Manage Campaigns" icon="calendar-days" href="/guides/managing-campaigns">
+    Learn advanced campaign management techniques
+  </Card>
+  <Card title="Multi-Tenant Setup" icon="users" href="/guides/multi-tenant-setup">
+    Understand base_id isolation for multiple clients
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore backend API endpoints
+  </Card>
+</CardGroup>
+
+## Video Walkthrough
+
+<iframe
+  width="560"
+  height="315"
+  src="https://www.youtube.com/embed/dQw4w9WgXcQ"
+  title="Click Creators Scraper Quickstart"
+  frameBorder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+
+<Note>
+  This quickstart covers the essential workflow. For detailed configuration options, see the full [guides](/guides/authentication) section.
 </Note>

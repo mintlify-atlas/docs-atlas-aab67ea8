@@ -1,0 +1,304 @@
+---
+title: Creating Jobs
+description: Step-by-step guide to creating scraping jobs for influencer campaigns
+---
+
+Scraping jobs are the foundation of the Click Creators Scraper platform. Each job represents a campaign to scrape followers/engagement from a specific influencer on a specific platform.
+
+## Overview
+
+A scraping job contains:
+
+- **Influencer Name** - The influencer you're targeting
+- **Platform** - Instagram, TikTok, X (Twitter), or Threads
+- **Number of VAs** - How many Virtual Assistants will process this data
+- **Airtable Base** - The Airtable base where scraped data is stored
+
+## Creating a Job
+
+<Steps>
+  <Step title="Navigate to the Configure page">
+    After logging in, you'll land on `/configure`. This is where you create new scraping campaigns.
+  </Step>
+
+  <Step title="Enter influencer name">
+    In the "Influencer Name" field, enter the name of the influencer you want to scrape.
+    
+    ```tsx
+    <Input
+      id="influencer"
+      placeholder="Enter influencer name"
+      value={influencer}
+      onChange={(e) => setInfluencer(e.target.value)}
+      required
+    />
+    ```
+    
+    This will be used to name your Airtable base and identify the job throughout the system.
+  </Step>
+
+  <Step title="Select a platform">
+    Choose which social media platform you want to scrape:
+    
+    - **Instagram** - Scrape Instagram followers and engagement
+    - **TikTok** - Scrape TikTok followers and engagement  
+    - **X (Twitter)** - Scrape X/Twitter followers and engagement
+    - **Threads** - Scrape Threads followers and engagement
+    
+    All platforms are currently enabled:
+    
+    ```tsx
+    const platforms: { name: Platform; enabled: boolean }[] = [
+      { name: 'Instagram', enabled: true },
+      { name: 'TikTok', enabled: true },
+      { name: 'X', enabled: true },
+      { name: 'Threads', enabled: true },
+    ];
+    ```
+  </Step>
+
+  <Step title="Set number of VAs">
+    Enter how many Virtual Assistants (VAs) will work on this campaign. Must be at least 1.
+    
+    ```tsx
+    <Input
+      id="numVAs"
+      type="number"
+      min="1"
+      placeholder="Enter number of VAs"
+      value={numVAs}
+      onChange={(e) => setNumVAs(e.target.value)}
+      required
+    />
+    ```
+    
+    This determines how many VA tables will be created in your Airtable base.
+  </Step>
+
+  <Step title="Submit the form">
+    Click "Create Campaign". The button is only enabled when all fields are valid:
+    
+    ```tsx
+    const isValid = influencer.trim() && platform && numVAs && parseInt(numVAs) >= 1;
+    
+    <Button
+      type="submit"
+      className="w-full"
+      disabled={!isValid || isSubmitting}
+    >
+      {isSubmitting ? 'Creating Campaign...' : 'Create Campaign'}
+    </Button>
+    ```
+  </Step>
+
+  <Step title="Provide Airtable link">
+    After submitting, you'll see the **Airtable Link Dialog**. This is where you provide the Airtable base ID.
+    
+    You can either:
+    - Paste a full Airtable URL (e.g., `https://airtable.com/appXXXXXX/...`)
+    - Enter just the base ID (e.g., `appXXXXXX`)
+    
+    The system will extract the base ID automatically:
+    
+    ```tsx
+    const extractBaseId = (input: string): string | null => {
+      // If it's already a base ID (starts with 'app')
+      if (input.startsWith('app')) {
+        return input
+      }
+      
+      // Extract from URL
+      const match = input.match(/app[a-zA-Z0-9]{14}/)
+      return match ? match[0] : null
+    }
+    ```
+  </Step>
+
+  <Step title="Wait for table creation">
+    The **Airtable Progress Dialog** appears and shows real-time progress:
+    
+    1. Creating Airtable base structure
+    2. Creating VA tables (one per VA)
+    3. Creating source profiles table
+    4. Setting up field configurations
+    5. Saving job to database
+    
+    This process typically takes 10-30 seconds depending on the number of VAs.
+  </Step>
+
+  <Step title="Job created successfully">
+    Once complete, you'll see a success toast and be redirected to either:
+    - The job's instance page (`/callum-dashboard?job={jobId}`)
+    - The platform's jobs list (e.g., `/instagram-jobs`)
+    
+    ```tsx
+    if (jobId) {
+      router.push(`/callum-dashboard?job=${jobId}`)
+    } else {
+      const platform = currentJobData.platform.toLowerCase()
+      router.push(`/${platform}-jobs`)
+    }
+    ```
+  </Step>
+</Steps>
+
+## Job Creation Flow
+
+Here's what happens behind the scenes when you create a job:
+
+### 1. Form Submission
+
+The form data is temporarily stored in component state:
+
+```tsx
+const handleJobSubmit = (data: {
+  influencer: string;
+  platform: Platform;
+  numVAs: number;
+}) => {
+  // Store the form data temporarily (not in DB yet)
+  setCurrentJobData({
+    jobId: '', // Will be generated after Airtable link is provided
+    influencer: data.influencer,
+    platform: data.platform,
+    numVAs: data.numVAs,
+  });
+
+  // Show Airtable link dialog immediately
+  setDialogState('airtable-link');
+};
+```
+
+### 2. Airtable Link Submission
+
+After providing the Airtable base ID:
+
+```tsx
+const handleAirtableLinkSubmit = async (submittedLink: string) => {
+  if (!currentJobData) return;
+
+  // Store the Airtable link
+  setAirtableLink(submittedLink);
+
+  // Show progress dialog - this will now actually create the tables
+  setDialogState('progress');
+};
+```
+
+### 3. Database Record Creation
+
+The job is saved to the `scraping_jobs` table:
+
+```tsx
+export async function createScrapingJob(
+  input: CreateScrapingJobInput
+): Promise<ScrapingJob | null> {
+  const { data, error } = await supabase
+    .from('scraping_jobs')
+    .insert({
+      influencer_name: input.influencer_name,
+      platform: input.platform,
+      airtable_base_id: input.airtable_base_id,
+      num_vas: input.num_vas || null,
+      status: input.status || 'active',
+      base_id: input.airtable_base_id // Use airtable_base_id for multi-tenant isolation
+    })
+    .select()
+    .single();
+
+  return data;
+}
+```
+
+### 4. Multi-Tenant Isolation
+
+Each job gets a unique `base_id` (same as `airtable_base_id`) that isolates all data:
+
+```tsx
+// All related data uses the same base_id
+await supabase
+  .from('global_usernames')
+  .insert({
+    username: 'example_user',
+    job_id: jobId,
+    base_id: baseId // Multi-tenant isolation
+  });
+```
+
+This ensures that usernames, assignments, and campaigns for one job never mix with another job's data.
+
+## Job Data Structure
+
+Once created, a job has the following structure:
+
+```typescript
+interface ScrapingJob {
+  job_id: string;              // UUID - unique identifier
+  influencer_name: string;     // Influencer's name
+  platform: Platform;          // 'instagram' | 'tiktok' | 'x' | 'threads'
+  airtable_base_id: string;    // Airtable base ID (e.g., appXXXXXX)
+  base_id: string;             // Multi-tenant isolation key (same as airtable_base_id)
+  num_vas: number | null;      // Number of VAs assigned
+  status: JobStatus;           // 'active' | 'paused' | 'archived'
+  created_at: string;          // ISO timestamp
+  updated_at: string | null;   // ISO timestamp
+}
+```
+
+## Canceling Job Creation
+
+You can cancel at any point before completion:
+
+```tsx
+const handleDialogCancel = () => {
+  // Close dialog and reset all state
+  setDialogState('none');
+  setIsSubmitting(false);
+  setCurrentJobData(null);
+  
+  toast({
+    title: 'Cancelled',
+    description: 'Job creation cancelled. Form has been reset.',
+  });
+};
+```
+
+This resets the form completely and no database records are created.
+
+## Common Issues
+
+### Invalid Airtable Base ID
+
+**Error:** "Invalid Airtable base ID format"
+
+**Solution:** Ensure your base ID:
+- Starts with `app`
+- Is exactly 17 characters (app + 14 alphanumeric)
+- Example: `appAbC123dEf456GhI`
+
+### Database Connection Error
+
+**Error:** "Failed to create job in database"
+
+**Solution:**
+- Check your Supabase credentials in `.env.local`
+- Verify the `scraping_jobs` table exists in Supabase
+- Check browser console for detailed error messages
+
+### Airtable API Rate Limit
+
+**Error:** "Too many requests to Airtable"
+
+**Solution:**
+- Wait a few minutes before trying again
+- Reduce the number of VA tables if possible
+- Contact Airtable support to increase rate limits
+
+## Next Steps
+
+After creating a job:
+
+1. [Start scraping profiles](/guides/managing-campaigns) to populate the username database
+2. [Create campaigns](/guides/managing-campaigns) to assign usernames to VAs
+3. [Monitor job statistics](/guides/managing-campaigns) to track progress
+4. [Switch between jobs](/guides/multi-tenant-setup) if you have multiple campaigns running

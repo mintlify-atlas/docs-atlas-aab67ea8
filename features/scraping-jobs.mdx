@@ -1,0 +1,318 @@
+---
+title: 'Scraping Jobs'
+description: 'Multi-platform scraping job management and campaign creation'
+icon: 'briefcase'
+---
+
+## Overview
+
+Scraping Jobs is the foundation of Click Creators Scraper's multi-tenant architecture. Each job represents a distinct scraping campaign for a specific influencer on a particular social media platform (Instagram, TikTok, Threads, or X).
+
+<CardGroup cols={2}>
+  <Card title="Multi-Platform Support" icon="layer-group">
+    Create campaigns for Instagram, TikTok, Threads, and X platforms
+  </Card>
+  <Card title="Isolated Workspaces" icon="shield">
+    Each job operates in its own Airtable base with dedicated data isolation
+  </Card>
+  <Card title="Real-time Statistics" icon="chart-line">
+    Track available usernames, assignments, and scrape results per job
+  </Card>
+  <Card title="Status Management" icon="toggle-on">
+    Control job lifecycle with active, paused, and archived states
+  </Card>
+</CardGroup>
+
+## Creating a Scraping Job
+
+Jobs are created through the Configure page, which guides you through a multi-step workflow.
+
+<Steps>
+  <Step title="Fill Job Form">
+    Navigate to the `/configure` page and enter:
+    - **Influencer Name**: The target account to scrape followers from
+    - **Platform**: Instagram, TikTok, Threads, or X
+    - **Number of VAs**: How many virtual assistants will work on this campaign
+    
+    Source: `components/configure-job-card.tsx:64-116`
+  </Step>
+  
+  <Step title="Create Airtable Base">
+    After submitting the form, you're prompted to create an Airtable base:
+    1. Click the link to open the AIVS Scraper Workspace
+    2. Create a new base named: `{Influencer}'s {Platform} Campaign`
+    3. Copy the base URL from your browser
+    4. Paste it into the dialog
+    
+    This step is **non-skippable** to ensure proper multi-tenant isolation.
+    
+    Source: `components/airtable-link-dialog.tsx:72-145`
+  </Step>
+  
+  <Step title="Setup Progress">
+    The system initializes the job with a 3-second progress animation, then redirects you to the dashboard.
+    
+    Behind the scenes, the job is saved to the `scraping_jobs` table with:
+    ```sql
+    job_id: UUID
+    influencer_name: TEXT
+    platform: TEXT
+    airtable_base_id: TEXT
+    num_vas: INTEGER
+    status: 'active' (default)
+    base_id: TEXT (same as airtable_base_id for multi-tenant isolation)
+    ```
+    
+    Source: `lib/scraping-jobs.ts:23-50`
+  </Step>
+</Steps>
+
+## Database Schema
+
+### scraping_jobs Table
+
+```sql
+CREATE TABLE scraping_jobs (
+  job_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  influencer_name TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  airtable_base_id TEXT,
+  num_vas INTEGER,
+  status TEXT DEFAULT 'active',
+  base_id TEXT,  -- Multi-tenant isolation key
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### Key Fields
+
+- **job_id**: Unique identifier for the job
+- **influencer_name**: Display name for the campaign (e.g., "MrBeast")
+- **platform**: One of `instagram`, `tiktok`, `threads`, or `x`
+- **airtable_base_id**: The Airtable base URL identifier
+- **num_vas**: Number of virtual assistants assigned to this campaign
+- **base_id**: Critical for multi-tenant data isolation (matches `airtable_base_id`)
+- **status**: `active`, `paused`, or `archived`
+
+## Viewing Jobs by Platform
+
+Each platform has its own dedicated page showing all jobs for that platform:
+
+- `/instagram-jobs` - Instagram campaigns
+- `/tiktok-jobs` - TikTok campaigns
+- `/threads-jobs` - Threads campaigns
+- `/x-jobs` - X (Twitter) campaigns
+
+Source: `components/job-list-by-platform.tsx:170-269`
+
+### Job List Features
+
+<Tabs>
+  <Tab title="Job Statistics">
+    Each job row displays real-time metrics:
+    - **Available Usernames**: Unused profiles ready for assignment
+    - **Total Assignments**: Number of profiles distributed to VAs
+    - **VAs Count**: Number of virtual assistants
+    - **Created Date**: When the job was created
+    
+    These stats are fetched from `global_usernames` and `daily_assignments` tables, filtered by `base_id`.
+    
+    Source: `lib/scraping-jobs.ts:248-293`
+  </Tab>
+  
+  <Tab title="Airtable Link">
+    Each job includes a direct link to its Airtable base:
+    ```tsx
+    {airtableUrl ? (
+      <a href={airtableUrl} target="_blank">
+        <ExternalLink /> Open Base
+      </a>
+    ) : (
+      <span>Not set</span>
+    )}
+    ```
+    
+    Clicking the link opens the Airtable base in a new tab.
+  </Tab>
+  
+  <Tab title="Legacy Support">
+    Jobs created before the multi-tenant migration are marked with a "Legacy" badge. These jobs may not have a `base_id` assigned.
+    
+    Source: `components/job-list-by-platform.tsx:214-232`
+  </Tab>
+</Tabs>
+
+## Job Status Management
+
+Jobs can be in three states:
+
+<AccordionGroup>
+  <Accordion title="Active" icon="circle-check" iconType="solid">
+    **Status Badge**: Green
+    
+    Jobs marked as `active` are:
+    - Visible in the active jobs list
+    - Selectable from the dashboard
+    - Available for scraping and assignment operations
+    
+    Only one job should typically be active at a time to avoid confusion.
+  </Accordion>
+  
+  <Accordion title="Paused" icon="circle-pause" iconType="solid">
+    **Status Badge**: Yellow
+    
+    Jobs marked as `paused` are:
+    - Temporarily inactive
+    - Not shown in active job filters
+    - Still visible in the full jobs list
+    
+    Use this status when you need to temporarily stop work on a campaign.
+  </Accordion>
+  
+  <Accordion title="Archived" icon="box-archive" iconType="solid">
+    **Status Badge**: Gray
+    
+    Jobs marked as `archived` are:
+    - Completed or cancelled campaigns
+    - Hidden from most views
+    - Still queryable for historical data
+    
+    Archiving is a soft delete that preserves all associated data.
+  </Accordion>
+</AccordionGroup>
+
+### Updating Job Status
+
+```typescript
+import { updateJobStatus } from '@/lib/scraping-jobs';
+
+// Activate a job
+await updateJobStatus(jobId, 'active');
+
+// Pause a job
+await updateJobStatus(jobId, 'paused');
+
+// Archive a job
+await updateJobStatus(jobId, 'archived');
+```
+
+Source: `lib/scraping-jobs.ts:237-242`
+
+## Multi-Tenant Isolation
+
+Every scraping job operates in its own isolated workspace using the `base_id` field:
+
+```typescript
+// All queries for job data are filtered by base_id
+const { data } = await supabase
+  .from('global_usernames')
+  .select('*')
+  .eq('base_id', baseId)  // Ensures data isolation
+  .eq('used', false);
+```
+
+This architecture ensures:
+- **Data Separation**: Each job's usernames, assignments, and campaigns are isolated
+- **Concurrent Operations**: Multiple jobs can run simultaneously without conflicts
+- **Clean Analytics**: Statistics are accurate per-job without cross-contamination
+
+## API Endpoints
+
+### Create Job
+
+Jobs are created through the Supabase client:
+
+```typescript
+const { data, error } = await supabase
+  .from('scraping_jobs')
+  .insert({
+    influencer_name: 'MrBeast',
+    platform: 'instagram',
+    airtable_base_id: 'appXXXXXXXXXX',
+    num_vas: 80,
+    status: 'active',
+    base_id: 'appXXXXXXXXXX'  // Same as airtable_base_id
+  })
+  .select()
+  .single();
+```
+
+### Get Active Job
+
+Retrieve the currently active job (used throughout the dashboard):
+
+```typescript
+import { getActiveJob } from '@/lib/scraping-jobs';
+
+const activeJob = await getActiveJob();
+const baseId = activeJob?.base_id;
+```
+
+Source: `lib/scraping-jobs.ts:159-195`
+
+### Get Jobs by Platform
+
+```typescript
+import { getJobsByPlatform } from '@/lib/scraping-jobs';
+
+const instagramJobs = await getJobsByPlatform('instagram');
+const activeOnly = await getJobsByPlatform('tiktok', true);
+```
+
+Source: `lib/scraping-jobs.ts:100-126`
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="One Active Job" icon="1">
+    Keep only one job active at a time to avoid confusion when running scraping operations.
+  </Card>
+  <Card title="Descriptive Names" icon="tag">
+    Use clear influencer names that make it easy to identify campaigns at a glance.
+  </Card>
+  <Card title="Correct Platform" icon="check">
+    Always select the correct platform - it determines which scraper actor is used.
+  </Card>
+  <Card title="Archive Completed" icon="box">
+    Archive jobs when campaigns are complete to keep the active list clean.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Job not appearing in list">
+    **Problem**: Created a job but it doesn't show up
+    
+    **Solutions**:
+    1. Check that you selected the correct platform filter
+    2. Verify the job status is `active` (not paused or archived)
+    3. Refresh the page to reload data
+    4. Check browser console for Supabase errors
+  </Accordion>
+  
+  <Accordion title="Cannot create Airtable base">
+    **Problem**: Dialog won't accept Airtable URL
+    
+    **Solutions**:
+    1. Ensure URL starts with `https://airtable.com/`
+    2. Copy the full URL from the browser address bar, not just the base ID
+    3. Verify you have access to the AIVS Scraper Workspace
+  </Accordion>
+  
+  <Accordion title="Stats showing zero">
+    **Problem**: Job statistics all show 0
+    
+    **Solutions**:
+    1. This is normal for newly created jobs
+    2. Stats will populate after running your first scrape operation
+    3. Verify `base_id` is set correctly in the database
+  </Accordion>
+</AccordionGroup>
+
+## Related Pages
+
+- [Campaign Management](/features/campaign-management) - Create and track campaigns within a job
+- [VA Distribution](/features/va-distribution) - Distribute profiles to VAs for a job
+- [Airtable Sync](/features/airtable-sync) - Sync job data to Airtable bases

@@ -1,0 +1,126 @@
+---
+title: Components Overview
+description: Architecture and design patterns for Click Creators Scraper UI components
+---
+
+## Component Architecture
+
+The Click Creators Scraper uses a React-based component architecture built with Next.js 14+ (App Router) and TypeScript. All components are designed with multi-tenant isolation in mind, leveraging the `BaseContext` for secure data access.
+
+## Core Design Patterns
+
+### Multi-Tenant Context
+
+All data-fetching components use the `BaseContext` to access the current active scraping job's `base_id`:
+
+```tsx
+import { useBase } from '@/contexts/base-context'
+
+function MyComponent() {
+  const { baseId, activeJob, isLoading } = useBase()
+  
+  // Use baseId in API calls and database queries
+  const data = await apiPost('/api/endpoint', baseId, payload)
+}
+```
+
+### State Reset on Navigation
+
+Components use the `usePageReset` and `useResetOnChange` hooks to automatically reset state when users navigate between jobs:
+
+```tsx
+import { useResetOnChange } from '@/hooks/use-page-reset'
+
+function MyComponent() {
+  useResetOnChange(baseId, () => {
+    // Reset component state when baseId changes
+    setData([])
+    setIsLoading(true)
+  }, { skipInitial: true })
+}
+```
+
+### ShadCN UI Components
+
+All UI components are built using [ShadCN UI](https://ui.shadcn.com/), which provides:
+
+- **Card, CardHeader, CardTitle, CardContent** - Container components
+- **Button** - Action triggers with variant support
+- **Input** - Form inputs with validation
+- **Table, TableHeader, TableBody, TableRow, TableCell** - Data display
+- **Dialog** - Modal overlays
+- **Progress** - Loading indicators
+- **Skeleton** - Loading states
+- **Badge** - Status indicators
+- **DropdownMenu** - Action menus
+- **Tabs** - Content organization
+
+## Component Categories
+
+### Data Input Components
+
+- **[DependenciesCard](/components/dependencies-card)** - Configure and scrape follower profiles
+- **[ConfigureJobCard](/components/configure-job-card)** - Create new scraping campaigns
+
+### Data Display Components
+
+- **[PaymentsTable](/components/payments-table)** - View and assign scraped accounts
+- **[CampaignsTable](/components/campaigns-table)** - View campaign history
+- **[JobListByPlatform](/components/job-list)** - List all campaigns by platform
+
+## API Integration
+
+Components use the `apiPost`, `apiGet`, `apiPut`, and `apiDelete` utilities from `@/lib/api`, which automatically inject the `base_id` header:
+
+```tsx
+import { apiPost } from '@/lib/api'
+
+const result = await apiPost('/api/scrape-followers', baseId, {
+  accounts: ['username1', 'username2'],
+  targetGender: 'male',
+  totalScrapeCount: 150,
+  platform: 'instagram'
+})
+```
+
+## Database Access
+
+Components use Supabase with context-aware clients for multi-tenant isolation:
+
+```tsx
+import { createSupabaseClientWithContext } from '@/lib/supabase'
+
+const supabaseWithContext = createSupabaseClientWithContext(baseId)
+const { data, error } = await supabaseWithContext
+  .from('campaigns')
+  .select('*')
+  .eq('base_id', baseId) // Explicit filter for belt-and-suspenders approach
+```
+
+## TypeScript Types
+
+All components use strict TypeScript types from `@/types/scraping-jobs`:
+
+```tsx
+import { Platform, ScrapingJob, ScrapingJobWithStats } from '@/types/scraping-jobs'
+
+interface MyComponentProps {
+  platform: Platform // 'instagram' | 'tiktok' | 'threads' | 'x'
+  job: ScrapingJob
+}
+```
+
+## Styling
+
+Components use Tailwind CSS with a consistent design system:
+
+- **Colors**: `text-muted-foreground`, `bg-muted`, `border`
+- **Spacing**: `gap-4`, `p-6`, `space-y-2`
+- **Typography**: `text-sm`, `font-medium`, `text-xl`
+- **States**: `hover:bg-muted/50`, `disabled:opacity-50`
+
+## Next Steps
+
+- [DependenciesCard](/components/dependencies-card) - Learn how to scrape follower profiles
+- [PaymentsTable](/components/payments-table) - Understand account assignment workflow
+- [ConfigureJobCard](/components/configure-job-card) - Create new scraping campaigns

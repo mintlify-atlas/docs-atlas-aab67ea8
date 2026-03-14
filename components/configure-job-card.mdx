@@ -1,0 +1,269 @@
+---
+title: ConfigureJobCard
+description: Form component for creating new scraping campaigns
+---
+
+## Overview
+
+The `ConfigureJobCard` component provides a form to create new scraping campaigns with:
+
+1. Influencer name input
+2. Platform selection (Instagram, TikTok, X, Threads)
+3. Number of VAs configuration
+4. Form validation
+5. Submission handling
+
+Located at: `components/configure-job-card.tsx`
+
+## Props
+
+```tsx
+interface ConfigureJobCardProps {
+  /** Callback when form is submitted with valid data */
+  onSubmit: (data: { 
+    influencer: string
+    platform: Platform
+    numVAs: number 
+  }) => void
+  
+  /** Whether submission is in progress */
+  isSubmitting?: boolean
+}
+
+type Platform = 'Instagram' | 'TikTok' | 'X' | 'Threads'
+```
+
+## Usage Example
+
+```tsx
+import { ConfigureJobCard } from '@/components/configure-job-card'
+import { useState } from 'react'
+import { Platform } from '@/lib/recents'
+
+function ConfigurePage() {
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  
+  const handleSubmit = async (data: { 
+    influencer: string
+    platform: Platform
+    numVAs: number 
+  }) => {
+    setIsSubmitting(true)
+    
+    try {
+      // Create scraping job
+      await createScrapingJob(data)
+      
+      // Show success message
+      toast({ title: 'Campaign created!' })
+    } catch (error) {
+      toast({ 
+        title: 'Failed to create campaign',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+  
+  return (
+    <ConfigureJobCard
+      onSubmit={handleSubmit}
+      isSubmitting={isSubmitting}
+    />
+  )
+}
+```
+
+## Features
+
+### 1. Platform Configuration
+
+```tsx
+const platforms: { name: Platform; enabled: boolean }[] = [
+  { name: 'Instagram', enabled: true },
+  { name: 'TikTok', enabled: true },
+  { name: 'X', enabled: true },
+  { name: 'Threads', enabled: true },
+]
+```
+
+All platforms are currently enabled. Disabled platforms show "(Coming soon)" label.
+
+### 2. Form Validation
+
+Validates inputs before allowing submission:
+
+```tsx
+const isValid = 
+  influencer.trim() &&  // Non-empty influencer name
+  platform &&            // Platform selected
+  numVAs &&              // Number entered
+  parseInt(numVAs) >= 1  // At least 1 VA
+
+<Button
+  type="submit"
+  disabled={!isValid || isSubmitting}
+>
+  {isSubmitting ? 'Creating Campaign...' : 'Create Campaign'}
+</Button>
+```
+
+### 3. State Management
+
+```tsx
+const [influencer, setInfluencer] = useState('')
+const [platform, setPlatform] = useState<Platform | ''>('')
+const [numVAs, setNumVAs] = useState<string>('')
+```
+
+### 4. Form Submission
+
+```tsx
+const handleSubmit = (e: React.FormEvent) => {
+  e.preventDefault()
+  
+  const numVAsInt = parseInt(numVAs) || 0
+  if (!influencer.trim() || !platform || numVAsInt < 1) {
+    return
+  }
+
+  onSubmit({
+    influencer: influencer.trim(),
+    platform,
+    numVAs: numVAsInt,
+  })
+}
+```
+
+### 5. Input Fields
+
+**Influencer Name**
+
+```tsx
+<Input
+  id="influencer"
+  placeholder="Enter influencer name"
+  value={influencer}
+  onChange={(e) => setInfluencer(e.target.value)}
+  required
+  disabled={isSubmitting}
+/>
+```
+
+**Platform Select**
+
+```tsx
+<Select
+  value={platform}
+  onValueChange={(value) => setPlatform(value as Platform)}
+  disabled={isSubmitting}
+>
+  <SelectTrigger id="platform">
+    <SelectValue placeholder="Select a platform" />
+  </SelectTrigger>
+  <SelectContent>
+    {platforms.map((p) => (
+      <SelectItem 
+        key={p.name} 
+        value={p.name}
+        disabled={!p.enabled}
+      >
+        {p.name}
+        {!p.enabled && <span className="ml-2 text-xs">(Coming soon)</span>}
+      </SelectItem>
+    ))}
+  </SelectContent>
+</Select>
+```
+
+**Number of VAs**
+
+```tsx
+<Input
+  id="numVAs"
+  type="number"
+  min="1"
+  placeholder="Enter number of VAs"
+  value={numVAs}
+  onChange={(e) => setNumVAs(e.target.value)}
+  required
+  disabled={isSubmitting}
+/>
+```
+
+## UI Components Used
+
+- **Card, CardHeader, CardTitle, CardDescription, CardContent** - Container
+- **Input** - Text and number inputs
+- **Select, SelectTrigger, SelectValue, SelectContent, SelectItem** - Platform dropdown
+- **Label** - Form labels
+- **Button** - Submit action
+
+## Component Lifecycle
+
+1. **Mount** - Empty form state initialized
+2. **User input** - State updates with each keystroke/selection
+3. **Validation** - Button enabled/disabled based on `isValid`
+4. **Submit** - Form prevented from default, `onSubmit` called
+5. **Loading** - `isSubmitting` prop disables all inputs
+6. **Reset** - Parent component can reset via `key` prop change
+
+## Form Reset Pattern
+
+From `app/configure/page.tsx:121`:
+
+```tsx
+<ConfigureContent
+  onJobSubmit={handleJobSubmit}
+  isSubmitting={isSubmitting}
+  key={dialogState === 'none' ? 'reset' : 'active'}
+/>
+```
+
+Changing the `key` prop forces React to remount the component, resetting all form state.
+
+## Real-World Example
+
+From `app/configure/page.tsx:43-61`:
+
+```tsx
+const handleJobSubmit = (data: {
+  influencer: string
+  platform: Platform
+  numVAs: number
+}) => {
+  // Store the form data temporarily
+  setCurrentJobData({
+    jobId: '',
+    influencer: data.influencer,
+    platform: data.platform,
+    numVAs: data.numVAs,
+  })
+
+  // Show Airtable link dialog immediately
+  setDialogState('airtable-link')
+}
+
+<ConfigureJobCard
+  onSubmit={handleJobSubmit}
+  isSubmitting={isSubmitting}
+/>
+```
+
+## Integration Flow
+
+1. User fills out form
+2. User clicks "Create Campaign"
+3. `onSubmit` callback receives validated data
+4. Parent shows Airtable link dialog
+5. User provides Airtable base URL
+6. Parent creates job in database
+7. Parent creates VA tables in Airtable
+8. Parent redirects to job dashboard
+
+## Related Components
+
+- AirtableLinkDialog - Next step after form submission (collects Airtable base URL)
+- AirtableProgressDialog - VA table creation progress (shows 3-second animation)
+- [JobListByPlatform](/components/job-list) - View created campaigns

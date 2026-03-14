@@ -1,0 +1,447 @@
+---
+title: 'Campaign Management'
+description: 'Campaign creation, tracking, and lifecycle management'
+icon: 'calendar-days'
+---
+
+## Overview
+
+Campaigns represent daily batches of profile assignments distributed to VAs. Each campaign selects a specific number of unused profiles from the database, distributes them across VA tables, and syncs them to Airtable.
+
+<Info>
+A **campaign** is a single distribution event. For example, if you assign 14,400 profiles to 80 VAs (180 each), that's one campaign.
+</Info>
+
+## Campaign Workflow
+
+The campaign creation process is a three-phase operation visible through a progress bar in the UI.
+
+<Steps>
+  <Step title="Creating Campaign (0-33%)">
+    ### Daily Selection
+    
+    The system calls `/api/daily-selection` with the `base_id` and `profiles_per_table` parameter:
+    
+    ```typescript
+    const selectionResult = await apiPost('/api/daily-selection', baseId, {
+      profiles_per_table: 180  // Or custom value
+    });
+    ```
+    
+    **Backend Operations**:
+    1. Creates a new campaign record in `campaigns` table
+    2. Calculates total profiles needed: `num_vas × profiles_per_table`
+    3. Selects unused profiles from `global_usernames` (where `used = false`)
+    4. Marks selected profiles as `used = true`
+    5. Returns `campaign_id` and `total_selected` count
+    
+    **Database Changes**:
+    ```sql
+    -- Insert campaign
+    INSERT INTO campaigns (campaign_date, total_assigned, status, base_id)
+    VALUES (CURRENT_DATE, 14400, true, 'appXXXXXXXX');
+    
+    -- Mark profiles as used
+    UPDATE global_usernames
+    SET used = true
+    WHERE username IN (selected_usernames)
+    AND base_id = 'appXXXXXXXX';
+    ```
+    
+    Source: `components/payments-table.tsx:116-133`
+  </Step>
+  
+  <Step title="Distributing (33-66%)">
+    ### VA Distribution
+    
+    The system calls `/api/distribute/{campaign_id}` to assign profiles to VA tables:
+    
+    ```typescript
+    const distributeResult = await apiPost(`/api/distribute/${campaignId}`, baseId, {
+      profiles_per_table: 180
+    });
+    ```
+    
+    **Backend Operations**:
+    1. Retrieves the selected profiles for the campaign
+    2. Distributes profiles evenly across VA tables (1-80)
+    3. Assigns position numbers within each table (1-180)
+    4. Inserts records into `daily_assignments` table
+    
+    **Distribution Logic**:
+    ```
+    For each profile (index 0 to 14,399):
+      va_table_number = (index % 80) + 1
+      position = Math.floor(index / 80) + 1
+    
+    Example:
+      Profile 0 → Table 1, Position 1
+      Profile 80 → Table 1, Position 2
+      Profile 1 → Table 2, Position 1
+    ```
+    
+    Source: `components/payments-table.tsx:135-152`
+  </Step>
+  
+  <Step title="Syncing to Airtable (66-100%)">
+    ### Airtable Sync
+    
+    The system calls `/api/airtable-sync/{campaign_id}` to push profiles to Airtable:
+    
+    ```typescript
+    const syncResult = await apiPost(`/api/airtable-sync/${campaignId}`, baseId);
+    ```
+    
+    **Backend Operations**:
+    1. Fetches all assignments for the campaign from `daily_assignments`
+    2. Groups profiles by `va_table_number`
+    3. For each VA table (1-80):
+       - Connects to corresponding Airtable table
+       - Creates records with profile data
+       - Includes rate limiting to respect API quotas
+    4. Updates campaign status to `success` when complete
+    
+    **Airtable Record Format**:
+    ```json
+    {
+      "ID": "12345678",
+      "Username": "johndoe",
+      "Full Name": "John Doe",
+      "Position": 1,
+      "Campaign Date": "2025-10-23"
+    }
+    ```
+    
+    Source: `components/payments-table.tsx:154-170`
+  </Step>
+</Steps>
+
+## Initiating a Campaign
+
+Campaigns are triggered from the **Extracted Accounts** card in the dashboard.
+
+### Fixed Assignment (180 per VA)
+
+Click the menu and select "Assign 180 accounts per VA".
+
+**Validation Dialog**:
+- Checks if at least 14,400 unused profiles exist
+- If insufficient profiles:
+  ```typescript
+  const { count } = await supabase
+    .from('global_usernames')
+    .select('*', { count: 'exact', head: true })
+    .eq('base_id', baseId)
+    .eq('used', false);
+  
+  if (count < 14400) {
+    // Show error toast
+  }
+  ```
+- If sufficient, proceeds with assignment
+
+Source: `components/payments-table.tsx:199-248`
+
+### Custom Assignment
+
+Click "Custom VA Assignment..." to specify a different number per VA:
+
+1. Dialog prompts for "Profiles per VA"
+2. Enter desired number (e.g., 100, 200, 250)
+3. System calculates total: `num_vas × profiles_per_table`
+4. Proceeds with campaign workflow
+
+Source: `components/payments-table.tsx:251-271`
+
+## Progress Tracking
+
+The campaign progress is managed through a global context that persists across component re-renders:
+
+```typescript
+const {
+  isAssigning,      // Boolean: Is a campaign in progress?
+  progress,         // Number: 0-100
+  progressStep,     // String: 'creating' | 'distributing' | 'syncing' | 'complete'
+  startAssignment,
+  updateProgress,
+  completeAssignment,
+  failAssignment
+} = useAssignmentProgress();
+```
+
+### Progress Indicator UI
+
+```tsx
+{progressStep !== 'idle' && (
+  <div className="space-y-2">
+    <div className="flex items-center justify-between">
+      <span>
+        {progressStep === 'creating' && '📋 Creating campaign and selecting profiles...'}
+        {progressStep === 'distributing' && '🎲 Distributing to VA tables...'}
+        {progressStep === 'syncing' && '☁️ Syncing to Airtable...'}
+        {progressStep === 'complete' && '✅ Complete!'}
+      </span>
+      <span>{progress}%</span>
+    </div>
+    <Progress value={progress} />
+  </div>
+)}
+```
+
+Source: `components/payments-table.tsx:326-339`
+
+## Campaign History
+
+View all past campaigns in the **Campaigns** card on the dashboard.
+
+### Table Structure
+
+| Column | Description |
+|--------|-------------|
+| **Date** | Campaign date (YYYY-MM-DD) |
+| **Total Assigned** | Number of profiles distributed |
+| **Status** | Success (green dot) or Failed (red dot) |
+
+```tsx
+<tr>
+  <td>{formatDate(campaign.campaign_date)}</td>
+  <td>{campaign.total_assigned.toLocaleString()}</td>
+  <td>
+    {campaign.status ? (
+      <div className="flex items-center gap-2">
+        <div className="h-2 w-2 rounded-full bg-green-500" />
+        <span>success</span>
+      </div>
+    ) : (
+      <div className="flex items-center gap-2">
+        <div className="h-2 w-2 rounded-full bg-red-500" />
+        <span>failed</span>
+      </div>
+    )}
+  </td>
+</tr>
+```
+
+Source: `components/campaigns-table.tsx:141-194`
+
+### Status Indicators
+
+<CardGroup cols={2}>
+  <Card title="Success (Green)" icon="circle-check" color="#10b981">
+    **Meaning**: All three phases completed successfully
+    - Campaign created
+    - Profiles distributed to VA tables
+    - Airtable sync completed
+  </Card>
+  <Card title="Failed (Red)" icon="circle-xmark" color="#ef4444">
+    **Meaning**: One or more phases failed
+    - Check backend logs for errors
+    - Profiles may be partially assigned
+    - Airtable may have incomplete data
+  </Card>
+</CardGroup>
+
+## Database Schema
+
+### campaigns Table
+
+```sql
+CREATE TABLE campaigns (
+  campaign_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  campaign_date DATE NOT NULL,
+  total_assigned INTEGER NOT NULL,
+  status BOOLEAN DEFAULT false,  -- true = success, false = failed
+  base_id TEXT NOT NULL,         -- Multi-tenant isolation
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### daily_assignments Table
+
+```sql
+CREATE TABLE daily_assignments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  campaign_id UUID REFERENCES campaigns(campaign_id),
+  username TEXT,
+  full_name TEXT,
+  va_table_number INTEGER,  -- 1 to 80
+  position INTEGER,         -- 1 to profiles_per_table
+  job_id UUID,
+  base_id TEXT,            -- Multi-tenant isolation
+  status TEXT DEFAULT 'pending',
+  assigned_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+## Error Handling
+
+The campaign workflow includes comprehensive error handling at each phase:
+
+### Phase 1 Errors (Campaign Creation)
+
+```typescript
+if (!selectionResult.success) {
+  toast({
+    title: "Campaign creation failed",
+    description: selectionResult.error || 'Could not create campaign',
+    variant: "destructive",
+  });
+  failAssignment();  // Resets progress to idle
+  return;
+}
+```
+
+**Common Causes**:
+- Insufficient unused profiles in database
+- Database connection errors
+- Invalid `base_id`
+
+### Phase 2 Errors (Distribution)
+
+```typescript
+if (!distributeResult.success) {
+  toast({
+    title: "Distribution failed",
+    description: distributeResult.error || 'Could not distribute profiles',
+    variant: "destructive",
+  });
+  failAssignment();
+  return;
+}
+```
+
+**Common Causes**:
+- Campaign ID not found
+- Database write errors
+- Invalid VA table numbers
+
+### Phase 3 Errors (Airtable Sync)
+
+```typescript
+if (!syncResult.success) {
+  toast({
+    title: "Airtable sync failed",
+    description: syncResult.error || 'Could not sync to Airtable',
+    variant: "destructive",
+  });
+  failAssignment();
+  return;
+}
+```
+
+**Common Causes**:
+- Invalid Airtable API key
+- Airtable base not found
+- API rate limit exceeded
+- Network errors
+
+Source: `components/payments-table.tsx:120-168`
+
+## Campaign Lifecycle (7-Day Cleanup)
+
+Campaigns older than 7 days can be cleaned up to free profiles for reuse.
+
+### Cleanup Endpoint
+
+```bash
+curl -X POST http://localhost:5001/api/cleanup
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "campaigns_cleaned": 5,
+  "profiles_freed": 72000
+}
+```
+
+**What Happens**:
+1. Finds campaigns where `campaign_date < NOW() - INTERVAL '7 days'`
+2. Retrieves all associated `daily_assignments`
+3. Marks usernames as `used = false` in `global_usernames`
+4. Deletes assignment records
+5. Optionally archives or deletes campaign records
+
+### Automated Cleanup (Cron Job)
+
+Set up a daily cron job to run cleanup automatically:
+
+```bash
+# Run cleanup daily at 2 AM
+0 2 * * * curl -X POST http://localhost:5001/api/cleanup
+```
+
+Source: README.md:469-472
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Check Available Profiles" icon="magnifying-glass">
+    Always verify you have enough unused profiles before creating a campaign. The system will warn you, but checking beforehand prevents interruptions.
+  </Card>
+  <Card title="Monitor Progress" icon="gauge">
+    Watch the progress bar during assignment. If it stalls, check backend logs for API errors.
+  </Card>
+  <Card title="Fixed vs Custom" icon="sliders">
+    Use fixed 180 for standard campaigns. Use custom assignment for testing or special requirements.
+  </Card>
+  <Card title="Review History" icon="clock-rotate-left">
+    Check campaign history regularly to track success rates and identify patterns in failures.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Campaign stuck at 0%">
+    **Problem**: Progress bar shows 0% and doesn't advance
+    
+    **Solutions**:
+    1. Check that backend API is running on port 5001
+    2. Open browser DevTools Network tab to see failed requests
+    3. Verify `base_id` is set in the active job
+    4. Check backend logs for database connection errors
+  </Accordion>
+  
+  <Accordion title="Insufficient profiles error">
+    **Problem**: "Not enough profiles" message when trying to assign
+    
+    **Solutions**:
+    1. Run scraping operation to add more profiles
+    2. Check `global_usernames` table:
+       ```sql
+       SELECT COUNT(*) FROM global_usernames 
+       WHERE base_id = 'your-base-id' AND used = false;
+       ```
+    3. Consider running cleanup to free old profiles
+    4. Use custom assignment with a lower number per VA
+  </Accordion>
+  
+  <Accordion title="Campaign shows as failed">
+    **Problem**: Red dot in campaigns history
+    
+    **Solutions**:
+    1. Check backend logs for specific error messages
+    2. Verify Airtable API key is valid
+    3. Ensure Airtable base exists and is accessible
+    4. Check if any VA tables (1-80) are missing in Airtable
+    5. Review database for partial assignment records
+  </Accordion>
+  
+  <Accordion title="Duplicate assignments">
+    **Problem**: Some VAs receive duplicate profiles
+    
+    **Solutions**:
+    1. This shouldn't happen - check for race conditions
+    2. Verify only one campaign is running at a time
+    3. Check `global_usernames.used` flags are updating correctly
+    4. Review database transaction handling in backend API
+  </Accordion>
+</AccordionGroup>
+
+## Related Pages
+
+- [Scraping Jobs](/features/scraping-jobs) - Create and manage jobs that campaigns belong to
+- [VA Distribution](/features/va-distribution) - Details on the 80×180 distribution algorithm
+- [Airtable Sync](/features/airtable-sync) - How profiles are synced to Airtable bases

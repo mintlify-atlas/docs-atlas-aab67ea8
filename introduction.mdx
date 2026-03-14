@@ -1,0 +1,110 @@
+---
+title: "Introduction"
+description: "Instagram marketing automation platform for scraping followers, managing campaigns, and distributing profiles to virtual assistants."
+---
+
+# Welcome to Click Creators Scraper
+
+Click Creators Scraper is a comprehensive Instagram marketing automation platform that streamlines follower scraping, profile filtering, campaign management, and VA (Virtual Assistant) distribution through Airtable.
+
+## What is Click Creators Scraper?
+
+Click Creators Scraper automates the entire workflow of sourcing Instagram profiles for marketing campaigns:
+
+1. **Scrape followers** from Instagram influencer accounts
+2. **Filter profiles** by gender using name-based detection
+3. **Manage campaigns** with daily batches of fresh profiles
+4. **Distribute to VAs** across 80 Airtable tables (180 profiles each)
+5. **Track progress** with real-time statistics and status monitoring
+
+### Key Metrics
+
+- **Daily Target**: 14,400 unique male profiles
+- **VA Distribution**: 80 virtual assistants
+- **Profiles per VA**: 180 per day
+- **Campaign Lifecycle**: 7 days
+- **Total Capacity**: 1.008M profiles/week
+
+## Core Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Platform Scraping" icon="instagram" href="/features/scraping-jobs">
+    Scrape followers from Instagram, TikTok, Threads, and X with multi-tenant job management
+  </Card>
+  <Card title="Campaign Management" icon="calendar-days" href="/features/campaign-management">
+    Create, track, and manage daily campaigns with automated profile selection
+  </Card>
+  <Card title="VA Distribution" icon="users" href="/features/va-distribution">
+    Automatically distribute 14,400 profiles across 80 VA tables
+  </Card>
+  <Card title="Airtable Sync" icon="table" href="/features/airtable-sync">
+    Seamlessly sync profiles to Airtable for VA access and workflow management
+  </Card>
+</CardGroup>
+
+## Quick Links
+
+<CardGroup cols={3}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes
+  </Card>
+  <Card title="Authentication" icon="lock" href="/guides/authentication">
+    Set up user authentication
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the backend API
+  </Card>
+</CardGroup>
+
+## Tech Stack
+
+**Frontend**
+- Next.js 14 (App Router)
+- TypeScript
+- Tailwind CSS + ShadCN UI
+- Supabase Client
+
+**Backend**
+- Flask API (Python)
+- Apify (Instagram scraping)
+- Supabase PostgreSQL
+- Airtable API
+
+**Database**
+- PostgreSQL with Row Level Security
+- Real-time subscriptions
+- Multi-tenant isolation
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Instagram Marketing Agencies">
+    Automate follower sourcing for client campaigns with gender-targeted profiles and VA distribution.
+  </Accordion>
+  <Accordion title="Influencer Outreach">
+    Build targeted lists of followers from competitor accounts for outreach campaigns.
+  </Accordion>
+  <Accordion title="Lead Generation">
+    Extract and distribute qualified leads to your sales team via Airtable.
+  </Accordion>
+  <Accordion title="Market Research">
+    Analyze follower demographics and behavior patterns across multiple influencer accounts.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<Steps>
+  <Step title="Install Dependencies">
+    Follow the [installation guide](/installation) to set up your development environment.
+  </Step>
+  <Step title="Configure Credentials">
+    Set up Supabase, Apify, and Airtable API credentials.
+  </Step>
+  <Step title="Create Your First Job">
+    Follow the [quickstart guide](/quickstart) to create your first scraping job.
+  </Step>
+  <Step title="Run a Campaign">
+    Learn how to [manage campaigns](/guides/managing-campaigns) and distribute profiles to VAs.
+  </Step>
+</Steps>

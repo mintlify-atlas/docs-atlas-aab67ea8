@@ -1,0 +1,333 @@
+---
+title: JobListByPlatform
+description: Component for displaying and managing scraping campaigns by platform
+---
+
+## Overview
+
+The `JobListByPlatform` component displays all scraping campaigns for a specific platform with:
+
+1. Campaign list with statistics (available usernames, assignments)
+2. Airtable base links
+3. Refresh functionality
+4. Navigation to campaign dashboards
+5. Create new campaign button
+
+Located at: `components/job-list-by-platform.tsx`
+
+## Props
+
+```tsx
+interface JobListByPlatformProps {
+  /** Platform to display campaigns for */
+  platform: Platform
+}
+
+type Platform = 'instagram' | 'threads' | 'tiktok' | 'x'
+```
+
+## Usage Example
+
+```tsx
+import { JobListByPlatform } from '@/components/job-list-by-platform'
+
+function InstagramJobsPage() {
+  return (
+    <div className="max-w-7xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-6">Instagram Campaigns</h1>
+      <JobListByPlatform platform="instagram" />
+    </div>
+  )
+}
+```
+
+## Data Structures
+
+```tsx
+import { 
+  ScrapingJobWithStats,
+  Platform
+} from '@/types/scraping-jobs'
+
+interface ScrapingJobWithStats extends ScrapingJob {
+  stats: {
+    totalUsernames: number
+    usedUsernames: number
+    availableUsernames: number
+    totalAssignments: number
+    totalScrapeResults: number
+  }
+}
+```
+
+## Features
+
+### 1. Fetch Jobs by Platform
+
+```tsx
+import { getJobsByPlatform, getJobStatisticsByBaseId } from '@/lib/scraping-jobs'
+
+async function fetchJobs() {
+  const platformKey = platform.toLowerCase() as 'instagram' | 'threads' | 'tiktok' | 'x'
+  const jobsData = await getJobsByPlatform(platformKey)
+  
+  // Fetch stats for each job
+  const jobsWithStats = await Promise.all(
+    jobsData.map(async (job) => {
+      const baseId = job.airtable_base_id || job.base_id
+      const stats = baseId 
+        ? await getJobStatisticsByBaseId(baseId)
+        : null
+      
+      return {
+        ...job,
+        stats: stats || {
+          totalUsernames: 0,
+          usedUsernames: 0,
+          availableUsernames: 0,
+          totalAssignments: 0,
+          totalScrapeResults: 0
+        }
+      }
+    })
+  )
+  
+  setJobs(jobsWithStats)
+}
+```
+
+### 2. Legacy Job Detection
+
+```tsx
+import { isLegacyJob, getJobDisplayName } from '@/types/scraping-jobs'
+
+const isLegacy = isLegacyJob(job.job_id)
+const displayName = getJobDisplayName(job)
+
+{isLegacy && (
+  <Badge variant="outline" className="ml-2 text-xs">
+    Legacy
+  </Badge>
+)}
+```
+
+### 3. Airtable Base Links
+
+```tsx
+const airtableUrl = job.airtable_base_id 
+  ? `https://airtable.com/${job.airtable_base_id}`
+  : null
+
+{airtableUrl ? (
+  <a 
+    href={airtableUrl}
+    target="_blank"
+    rel="noopener noreferrer"
+    onClick={(e) => e.stopPropagation()}
+    className="inline-flex items-center gap-1 text-primary hover:underline"
+  >
+    <ExternalLink className="h-4 w-4" />
+    <span className="text-sm">Open Base</span>
+  </a>
+) : (
+  <span className="text-muted-foreground text-sm">Not set</span>
+)}
+```
+
+### 4. Navigation to Job Dashboard
+
+```tsx
+import { useRouter } from 'next/navigation'
+
+const router = useRouter()
+
+<TableRow 
+  key={job.job_id} 
+  className="cursor-pointer hover:bg-muted/50"
+  onClick={() => router.push(`/callum-dashboard?job=${job.job_id}`)}
+>
+  {/* Table cells */}
+</TableRow>
+```
+
+### 5. Refresh Functionality
+
+```tsx
+const [isRefreshing, setIsRefreshing] = useState(false)
+
+async function handleRefresh() {
+  setIsRefreshing(true)
+  await fetchJobs()
+}
+
+<Button 
+  variant="outline" 
+  size="icon"
+  onClick={handleRefresh}
+  disabled={isRefreshing}
+>
+  <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+</Button>
+```
+
+### 6. Create New Campaign
+
+```tsx
+<Button onClick={() => router.push(`/configure?platform=${platform.toLowerCase()}`)}>
+  <Plus className="mr-2 h-4 w-4" />
+  New Campaign
+</Button>
+```
+
+### 7. Date Formatting
+
+```tsx
+function formatDate(dateString: string) {
+  return new Date(dateString).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+// Example: "Jan 15, 2025"
+```
+
+### 8. Platform Display Names
+
+```tsx
+function getPlatformDisplayName(platform: Platform): string {
+  const names: Record<Platform, string> = {
+    instagram: 'Instagram',
+    threads: 'Threads',
+    tiktok: 'TikTok',
+    x: 'X'
+  }
+  return names[platform]
+}
+```
+
+### 9. State Reset on Unmount
+
+```tsx
+import { usePageReset } from '@/hooks/use-page-reset'
+
+usePageReset(() => {
+  console.log('[JobListByPlatform] Resetting component state on unmount')
+  setJobs([])
+  setLoading(true)
+  setIsRefreshing(false)
+  setError(null)
+})
+```
+
+## UI Components Used
+
+- **Card, CardHeader, CardTitle, CardDescription, CardContent** - Container
+- **Table, TableHeader, TableBody, TableRow, TableHead, TableCell** - Job list
+- **Button** - Refresh and create actions
+- **Skeleton** - Loading state
+- **Badge** - Legacy job indicator
+- **RefreshCw, Plus, ExternalLink** (Lucide icons) - Action icons
+
+## Table Structure
+
+```tsx
+<Table>
+  <TableHeader>
+    <TableRow>
+      <TableHead className="w-[200px]">Influencer</TableHead>
+      <TableHead className="w-[150px]">Airtable Base</TableHead>
+      <TableHead className="text-center w-[80px]">VAs</TableHead>
+      <TableHead className="text-center w-[120px]">Available Usernames</TableHead>
+      <TableHead className="text-center w-[130px]">Assignments</TableHead>
+      <TableHead className="w-[120px]">Created</TableHead>
+    </TableRow>
+  </TableHeader>
+  <TableBody>
+    {jobs.map((job) => (
+      <TableRow key={job.job_id}>
+        <TableCell>{getJobDisplayName(job)}</TableCell>
+        <TableCell>{/* Airtable link */}</TableCell>
+        <TableCell className="text-center">{job.num_vas || 0}</TableCell>
+        <TableCell className="text-center">{job.stats?.availableUsernames || 0}</TableCell>
+        <TableCell className="text-center">{job.stats?.totalAssignments || 0}</TableCell>
+        <TableCell>{formatDate(job.created_at)}</TableCell>
+      </TableRow>
+    ))}
+  </TableBody>
+</Table>
+```
+
+## Loading State
+
+```tsx
+if (loading && !isRefreshing) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{getPlatformDisplayName(platform)} Campaigns</CardTitle>
+        <CardDescription>Loading campaigns...</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-2">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+```
+
+## Empty State
+
+```tsx
+{jobs.length === 0 ? (
+  <div className="text-center py-8 text-muted-foreground">
+    No campaigns found for {getPlatformDisplayName(platform)}. 
+    Create your first campaign to get started.
+  </div>
+) : (
+  <Table>{/* Job rows */}</Table>
+)}
+```
+
+## Real-World Example
+
+From `app/instagram-jobs/page.tsx:45`:
+
+```tsx
+<JobListByPlatform platform="instagram" />
+```
+
+Used on platform-specific job list pages (Instagram, TikTok, X, Threads).
+
+## Database Functions
+
+```tsx
+// From @/lib/scraping-jobs
+
+// Get all jobs for a platform
+export async function getJobsByPlatform(
+  platform: 'instagram' | 'threads' | 'tiktok' | 'x'
+): Promise<ScrapingJob[]>
+
+// Get statistics for a job
+export async function getJobStatisticsByBaseId(
+  baseId: string
+): Promise<JobStatistics>
+
+// Update job status
+export async function updateJobStatus(
+  jobId: string,
+  newStatus: 'active' | 'paused' | 'archived'
+): Promise<void>
+```
+
+## Related Components
+
+- [ConfigureJobCard](/components/configure-job-card) - Create new campaigns
+- [DependenciesCard](/components/dependencies-card) - Scrape followers for a campaign
+- [PaymentsTable](/components/payments-table) - Assign profiles to VAs

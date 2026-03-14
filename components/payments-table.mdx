@@ -1,0 +1,306 @@
+---
+title: PaymentsTable
+description: Component for viewing scraped accounts and assigning them to VAs via Airtable
+---
+
+## Overview
+
+The `PaymentsTable` component displays scraped follower accounts and provides workflow actions to:
+
+1. View paginated list of scraped accounts
+2. Create campaigns and select profiles for distribution
+3. Distribute profiles to VA tables in Airtable
+4. Track assignment progress with visual feedback
+
+Located at: `components/payments-table.tsx`
+
+## Props
+
+```tsx
+interface PaymentsTableProps {
+  /** Array of scraped accounts to display */
+  accounts?: Account[]
+  
+  /** Total number of filtered accounts from scraping */
+  totalFiltered?: number
+  
+  /** Whether scraping is in progress */
+  isLoading?: boolean
+  
+  /** Callback when campaign assignment completes */
+  onCampaignComplete?: () => void
+  
+  /** Whether VA assignment is allowed (unused in current implementation) */
+  canAssignToVAs?: boolean
+  
+  /** Status message for assignment readiness (unused) */
+  statusMessage?: string
+}
+
+interface Account {
+  id: string
+  fullName: string
+  username: string
+}
+```
+
+## Usage Example
+
+```tsx
+import { PaymentsTable } from '@/components/payments-table'
+import { useState } from 'react'
+
+function DashboardPage() {
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [totalFiltered, setTotalFiltered] = useState(0)
+  const [isLoading, setIsLoading] = useState(false)
+  
+  return (
+    <PaymentsTable
+      accounts={accounts}
+      totalFiltered={totalFiltered}
+      isLoading={isLoading}
+      onCampaignComplete={() => {
+        // Refresh campaigns table and status card
+        console.log('Campaign completed, refreshing UI...')
+      }}
+    />
+  )
+}
+```
+
+## Features
+
+### 1. Paginated Account Display
+
+Displays 10 accounts per page with navigation:
+
+```tsx
+const itemsPerPage = 10
+const currentAccounts = accounts.slice(startIndex, endIndex)
+const totalPages = Math.ceil(totalAccounts / itemsPerPage)
+```
+
+### 2. VA Assignment Workflow
+
+The component orchestrates a three-step campaign workflow:
+
+**Step 1: Create Campaign & Daily Selection (0% → 33%)**
+
+```tsx
+const selectionResult = await apiPost('/api/daily-selection', baseId, {
+  profiles_per_table: profilesPerTableToUse
+})
+
+const campaignId = selectionResult.campaign_id
+```
+
+**Step 2: Distribute to VA Tables (33% → 66%)**
+
+```tsx
+const distributeResult = await apiPost(`/api/distribute/${campaignId}`, baseId, {
+  profiles_per_table: profilesPerTableToUse
+})
+```
+
+**Step 3: Sync to Airtable (66% → 100%)**
+
+```tsx
+const syncResult = await apiPost(`/api/airtable-sync/${campaignId}`, baseId)
+```
+
+### 3. Assignment Options
+
+Two assignment modes via dropdown menu:
+
+**Fixed 180 Assignment**
+
+```tsx
+const handleFixed180Assignment = async () => {
+  // Check if 14,400 profiles are available (180 × 80 VAs)
+  const { count } = await supabase
+    .from('global_usernames')
+    .select('*', { count: 'exact', head: true })
+    .eq('base_id', baseId)
+    .eq('used', false)
+  
+  const required = 14400
+  if (count < required) {
+    toast({ title: "Not enough profiles" })
+    return
+  }
+  
+  handleAssignToVAs(180)
+}
+```
+
+**Custom Assignment**
+
+```tsx
+const handleOpenCustomDialog = () => {
+  setCustomProfilesPerTable(defaultProfilesPerTable.toString())
+  setIsDialogOpen(true)
+}
+
+const handleConfirmCustomAssignment = () => {
+  const value = parseInt(customProfilesPerTable)
+  handleAssignToVAs(value)
+}
+```
+
+### 4. Progress Tracking
+
+Uses global assignment progress context:
+
+```tsx
+import { useAssignmentProgress } from '@/contexts/assignment-progress-context'
+
+const { 
+  isAssigning, 
+  progress, 
+  progressStep, 
+  startAssignment, 
+  updateProgress, 
+  completeAssignment, 
+  failAssignment 
+} = useAssignmentProgress()
+
+// During workflow
+startAssignment()
+updateProgress(33, 'creating')
+updateProgress(66, 'distributing')
+updateProgress(75, 'syncing')
+completeAssignment(profilesPerTable)
+```
+
+Progress steps:
+
+- `'idle'` - No assignment in progress
+- `'creating'` - Creating campaign and selecting profiles
+- `'distributing'` - Distributing to VA tables
+- `'syncing'` - Syncing to Airtable
+- `'complete'` - Assignment finished
+
+### 5. Loading States
+
+Shows skeleton rows while scraping:
+
+```tsx
+const SkeletonRow = ({ index }: { index: number }) => (
+  <div className="flex items-center gap-4 px-4 py-3">
+    <div className="w-12 text-sm font-medium text-muted-foreground">
+      {startIndex + index + 1}
+    </div>
+    <Skeleton className="h-4 w-16" />
+    <Skeleton className="h-4 w-32" />
+    <Skeleton className="h-4 w-20" />
+  </div>
+)
+
+{isLoading
+  ? Array.from({ length: 10 }, (_, index) => 
+      <SkeletonRow key={`skeleton-${index}`} index={index} />
+    )
+  : currentAccounts.map(account => (
+      <AccountRow key={account.id} account={account} />
+    ))
+}
+```
+
+## UI Components Used
+
+- **Card, CardHeader, CardTitle, CardContent** - Container
+- **Button** - Pagination controls
+- **Skeleton** - Loading state
+- **Progress** - Assignment progress bar
+- **DropdownMenu** - Assignment actions
+- **Dialog** - Custom assignment input, confirmation dialogs
+- **Input** - Custom profiles per VA
+- **Label** - Form labels
+
+## API Endpoints
+
+### POST /api/daily-selection
+
+```tsx
+// Request
+{
+  profiles_per_table: number
+}
+
+// Response
+{
+  success: boolean,
+  campaign_id: string,
+  total_selected: number,
+  error?: string
+}
+```
+
+### POST /api/distribute/{campaign_id}
+
+```tsx
+// Request
+{
+  profiles_per_table: number
+}
+
+// Response
+{
+  success: boolean,
+  error?: string
+}
+```
+
+### POST /api/airtable-sync/{campaign_id}
+
+```tsx
+// Request
+{} // No body required
+
+// Response
+{
+  success: boolean,
+  error?: string
+}
+```
+
+## Database Queries
+
+### Check Available Profiles
+
+```tsx
+const { count, error } = await supabase
+  .from('global_usernames')
+  .select('*', { count: 'exact', head: true })
+  .eq('base_id', baseId)
+  .eq('used', false)
+```
+
+## Real-World Example
+
+From `app/callum-dashboard/page.tsx:220-227`:
+
+```tsx
+<PaymentsTable 
+  accounts={scrapedAccounts}
+  totalFiltered={totalFiltered}
+  isLoading={isScrapingLoading}
+  onCampaignComplete={handleCampaignComplete}
+  canAssignToVAs={canAssignToVAs}
+  statusMessage={statusMessage}
+/>
+```
+
+## Environment Variables
+
+```bash
+# Default number of profiles per VA table
+NEXT_PUBLIC_PROFILES_PER_TABLE=180
+```
+
+## Related Components
+
+- [DependenciesCard](/components/dependencies-card) - Scrape accounts to populate this table
+- [CampaignsTable](/components/campaigns-table) - View historical campaign assignments
+- GlobalAssignmentProgress - Context-based persistent progress indicator (shows across page navigation)

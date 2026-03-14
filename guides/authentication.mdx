@@ -1,0 +1,223 @@
+---
+title: Authentication
+description: Learn how to authenticate and access the Click Creators Scraper platform
+---
+
+Click Creators Scraper uses a simple three-factor authentication system to protect access to the dashboard and scraping operations.
+
+## Authentication Flow
+
+The platform uses environment variable-based authentication with three credentials:
+
+1. **Username** - Your account username
+2. **Password** - Your account password  
+3. **OTP (One-Time Password)** - A 6-digit code for additional security
+
+### Login Route
+
+Authentication is handled through the `/callum` route:
+
+```
+https://your-domain.com/callum
+```
+
+This route presents a login form where you'll enter your credentials.
+
+## How to Log In
+
+<Steps>
+  <Step title="Navigate to the login page">
+    Visit `/callum` in your browser. You'll see a login form with the AIVS logo.
+  </Step>
+
+  <Step title="Enter your username">
+    Input your username in the first field. This value is stored in the `NEXT_PUBLIC_LOGIN_USERNAME` environment variable.
+  </Step>
+
+  <Step title="Enter your password">
+    Input your password in the second field. This value is stored in the `NEXT_PUBLIC_LOGIN_PASSWORD` environment variable.
+  </Step>
+
+  <Step title="Enter the OTP code">
+    Input the 6-digit OTP code. The code is displayed in a segmented input (XX-XX-XX format). This value is stored in the `NEXT_PUBLIC_LOGIN_OTP` environment variable.
+    
+    ```tsx
+    <InputOTP maxLength={6} value={otp} onChange={(value) => setOtp(value)}>
+      <InputOTPGroup>
+        <InputOTPSlot index={0} />
+        <InputOTPSlot index={1} />
+      </InputOTPGroup>
+      <InputOTPSeparator />
+      <InputOTPGroup>
+        <InputOTPSlot index={2} />
+        <InputOTPSlot index={3} />
+      </InputOTPGroup>
+      <InputOTPSeparator />
+      <InputOTPGroup>
+        <InputOTPSlot index={4} />
+        <InputOTPSlot index={5} />
+      </InputOTPGroup>
+    </InputOTP>
+    ```
+  </Step>
+
+  <Step title="Submit the form">
+    Click the "Login" button. If all credentials match, you'll be redirected to `/configure` (the main dashboard).
+  </Step>
+</Steps>
+
+## Authentication Context
+
+Once authenticated, your session is managed by the `AuthContext` provider:
+
+```tsx
+// contexts/auth-context.tsx
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    // Check for existing session authentication
+    const authState = sessionStorage.getItem('isAuthenticated')
+    
+    if (authState === 'true') {
+      setIsAuthenticated(true)
+    }
+    
+    setIsLoading(false)
+  }, [])
+
+  const login = () => {
+    setIsAuthenticated(true)
+    // Store in sessionStorage to persist across navigation (but not page refresh)
+    sessionStorage.setItem('isAuthenticated', 'true')
+  }
+
+  const logout = () => {
+    setIsAuthenticated(false)
+    sessionStorage.removeItem('isAuthenticated')
+    localStorage.removeItem("isAuthenticated")
+  }
+
+  return (
+    <AuthContext.Provider
+      value={{
+        isAuthenticated,
+        login,
+        logout,
+        isLoading,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  )
+}
+```
+
+### Session Persistence
+
+Authentication state is stored in `sessionStorage`, which means:
+- ✅ **Persists across navigation** within the same browser tab
+- ❌ **Does not persist** after closing the browser tab or refreshing the page
+- ❌ **Does not sync** across multiple tabs
+
+You'll need to log in again after:
+- Closing the browser tab
+- Refreshing the page (F5 or Cmd+R)
+- Opening the app in a new tab
+
+## Environment Configuration
+
+To configure authentication credentials, set these environment variables in your `.env.local` file:
+
+```bash
+# Authentication Credentials
+NEXT_PUBLIC_LOGIN_USERNAME=your-username
+NEXT_PUBLIC_LOGIN_PASSWORD=your-password
+NEXT_PUBLIC_LOGIN_OTP=123456
+```
+
+<Warning>
+  These credentials are exposed to the client side (browser) since they use the `NEXT_PUBLIC_` prefix. For production deployments, consider implementing server-side authentication with secure session management.
+</Warning>
+
+## Using Authentication in Components
+
+Access authentication state and methods using the `useAuth` hook:
+
+```tsx
+import { useAuth } from '@/contexts/auth-context'
+
+function MyComponent() {
+  const { isAuthenticated, login, logout, isLoading } = useAuth()
+
+  if (isLoading) {
+    return <p>Loading...</p>
+  }
+
+  if (!isAuthenticated) {
+    return <p>Please log in</p>
+  }
+
+  return (
+    <div>
+      <p>Welcome! You are authenticated.</p>
+      <button onClick={logout}>Logout</button>
+    </div>
+  )
+}
+```
+
+## Protected Routes
+
+The login page automatically redirects authenticated users to `/configure`:
+
+```tsx
+// app/callum/page.tsx
+useEffect(() => {
+  if (!isLoading && isAuthenticated) {
+    router.push("/configure")
+  }
+}, [isAuthenticated, isLoading, router])
+```
+
+This prevents authenticated users from seeing the login form unnecessarily.
+
+## Troubleshooting
+
+### "Invalid credentials" Error
+
+If you see this error after submitting the form:
+
+1. Verify your environment variables are set correctly
+2. Ensure there are no extra spaces in the credentials
+3. Check that the `.env.local` file is in the project root
+4. Restart the development server after changing environment variables
+
+### Session Lost After Refresh
+
+This is expected behavior. The session is stored in `sessionStorage` and clears on page refresh. Simply log in again using `/callum`.
+
+### Cannot Access Dashboard
+
+If redirected back to login after successfully authenticating:
+
+1. Check browser console for JavaScript errors
+2. Verify `sessionStorage` is enabled in your browser
+3. Clear browser cache and cookies
+4. Try in an incognito/private window
+
+## Security Considerations
+
+<Warning>
+  **Production Security Recommendations:**
+  
+  - Migrate to server-side authentication with JWT tokens
+  - Implement OAuth 2.0 or similar industry-standard auth
+  - Use secure HTTP-only cookies instead of sessionStorage
+  - Add rate limiting to prevent brute force attacks
+  - Implement proper OTP generation and validation
+  - Never commit `.env.local` to version control
+</Warning>
+
+The current implementation is suitable for internal tools and development environments, but should be enhanced before deploying to production.

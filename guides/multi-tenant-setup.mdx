@@ -1,0 +1,625 @@
+---
+title: Multi-Tenant Setup
+description: Understanding the multi-tenant base_id isolation system
+---
+
+Click Creators Scraper is built with a multi-tenant architecture that allows multiple influencer campaigns to run simultaneously without data cross-contamination. This is achieved through the `base_id` isolation system.
+
+## What is Multi-Tenancy?
+
+Multi-tenancy means that multiple scraping jobs (tenants) can share the same application infrastructure while keeping their data completely separate.
+
+Each scraping job has:
+- Its own Airtable base
+- Its own username pool
+- Its own campaign history
+- Its own assignments and statistics
+
+## The `base_id` System
+
+The `base_id` is the cornerstone of data isolation. It's derived from the Airtable base ID and used as a foreign key across all related tables.
+
+### Source of Truth
+
+When you create a scraping job, the `base_id` is set to match the `airtable_base_id`:
+
+```tsx
+export async function createScrapingJob(
+  input: CreateScrapingJobInput
+): Promise<ScrapingJob | null> {
+  const { data, error } = await supabase
+    .from('scraping_jobs')
+    .insert({
+      influencer_name: input.influencer_name,
+      platform: input.platform,
+      airtable_base_id: input.airtable_base_id,
+      num_vas: input.num_vas || null,
+      status: input.status || 'active',
+      base_id: input.airtable_base_id // Same as airtable_base_id
+    })
+    .select()
+    .single();
+
+  return data;
+}
+```
+
+### Database Schema
+
+All related tables include a `base_id` column:
+
+```sql
+-- scraping_jobs table
+CREATE TABLE scraping_jobs (
+  job_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  influencer_name TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  airtable_base_id TEXT NOT NULL,
+  base_id TEXT NOT NULL,  -- Multi-tenant isolation key
+  num_vas INTEGER,
+  status TEXT DEFAULT 'active',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ
+);
+
+-- global_usernames table
+CREATE TABLE global_usernames (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  full_name TEXT,
+  used BOOLEAN DEFAULT FALSE,
+  used_at TIMESTAMPTZ,
+  job_id UUID REFERENCES scraping_jobs(job_id),
+  base_id TEXT NOT NULL,  -- Matches parent job's base_id
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- daily_assignments table
+CREATE TABLE daily_assignments (
+  assignment_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  campaign_id TEXT NOT NULL,
+  va_table_number INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  full_name TEXT,
+  job_id UUID REFERENCES scraping_jobs(job_id),
+  base_id TEXT NOT NULL,  -- Matches parent job's base_id
+  status TEXT DEFAULT 'pending',
+  assigned_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ
+);
+
+-- campaigns table
+CREATE TABLE campaigns (
+  campaign_id TEXT PRIMARY KEY,
+  campaign_date TIMESTAMPTZ NOT NULL,
+  total_assigned INTEGER NOT NULL,
+  status BOOLEAN NOT NULL,
+  base_id TEXT NOT NULL,  -- Matches parent job's base_id
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- scrape_results table
+CREATE TABLE scrape_results (
+  id SERIAL PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  scraping_job_id UUID REFERENCES scraping_jobs(job_id),
+  profile_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  full_name TEXT,
+  source_account TEXT,
+  base_id TEXT NOT NULL,  -- Matches parent job's base_id
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+## BaseContext Provider
+
+The `BaseContext` provider manages the active job and its `base_id` globally:
+
+```tsx
+// contexts/base-context.tsx
+export function BaseProvider({ children }: { children: React.ReactNode }) {
+  const [activeJob, setActiveJob] = useState<ScrapingJob | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  const fetchActiveJob = useCallback(async () => {
+    // First, try to get an active job
+    const { data: activeJobs } = await supabase
+      .from('scraping_jobs')
+      .select('*')
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (activeJobs && activeJobs.length > 0) {
+      setActiveJob(activeJobs[0])
+      return
+    }
+
+    // Fallback: get the most recent job
+    const { data: recentJobs } = await supabase
+      .from('scraping_jobs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (recentJobs && recentJobs.length > 0) {
+      setActiveJob(recentJobs[0])
+    }
+  }, [])
+
+  return (
+    <BaseContext.Provider
+      value={{
+        activeJob,
+        baseId: activeJob?.base_id || null,
+        airtableBaseId: activeJob?.airtable_base_id || null,
+        isLoading,
+        refreshActiveJob: fetchActiveJob,
+      }}
+    >
+      {children}
+    </BaseContext.Provider>
+  )
+}
+```
+
+### Using the BaseContext
+
+Components access the current `base_id` via the `useBase` hook:
+
+```tsx
+import { useBase } from '@/contexts/base-context'
+
+function MyComponent() {
+  const { baseId, activeJob, isLoading } = useBase()
+  
+  if (isLoading) return <Spinner />
+  if (!baseId) return <Error message="No active job" />
+  
+  // Use baseId in queries
+  const fetchData = async () => {
+    const { data } = await supabase
+      .from('global_usernames')
+      .select('*')
+      .eq('base_id', baseId)
+  }
+}
+```
+
+## Data Isolation Patterns
+
+### Pattern 1: Context-Aware Client
+
+Create a Supabase client that automatically filters by `base_id`:
+
+```tsx
+export function createSupabaseClientWithContext(baseId: string) {
+  // This is a simplified example
+  // In practice, you might implement RLS policies or middleware
+  return {
+    from: (table: string) => ({
+      select: (columns: string) => ({
+        eq: (column: string, value: any) => {
+          // Automatically add base_id filter
+          return supabase
+            .from(table)
+            .select(columns)
+            .eq('base_id', baseId)
+            .eq(column, value)
+        }
+      })
+    })
+  }
+}
+```
+
+### Pattern 2: Belt-and-Suspenders
+
+Use both context-aware client AND explicit filter:
+
+```tsx
+const fetchCampaigns = async () => {
+  // Create a Supabase client with the base_id context
+  const supabaseWithContext = createSupabaseClientWithContext(baseId)
+  
+  // Query with explicit base_id filter (belt-and-suspenders)
+  const { data } = await supabaseWithContext
+    .from('campaigns')
+    .select('*')
+    .eq('base_id', baseId)  // Explicit filter for safety
+    .order('campaign_date', { ascending: false })
+}
+```
+
+This ensures data isolation even if the context-aware client has bugs.
+
+### Pattern 3: Function-Level Isolation
+
+Pass `base_id` explicitly to all database functions:
+
+```tsx
+export async function addUsernamesToJob(
+  jobId: string,
+  baseId: string,  // Required parameter
+  usernames: Array<{...}>
+): Promise<boolean> {
+  if (!baseId) {
+    console.error('base_id is required for adding usernames')
+    return false
+  }
+
+  const { error } = await supabase
+    .from('global_usernames')
+    .insert(
+      usernames.map(u => ({
+        ...u,
+        job_id: jobId,
+        base_id: baseId  // Always include base_id
+      }))
+    )
+
+  return !error
+}
+```
+
+## Active Job Determination
+
+The system determines the "active job" using this priority:
+
+1. **Explicit Selection** - If user manually selects a job
+2. **Status-Based** - Job where `status = 'active'`
+3. **Recency Fallback** - Most recently created job
+
+```tsx
+export async function getActiveJob(): Promise<ScrapingJob | null> {
+  // Priority 1: Job with status='active'
+  const { data: activeJobs } = await supabase
+    .from('scraping_jobs')
+    .select('*')
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  if (activeJobs && activeJobs.length > 0) {
+    return activeJobs[0]
+  }
+
+  // Priority 2: Most recent job (fallback)
+  const { data: recentJobs } = await supabase
+    .from('scraping_jobs')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  return recentJobs && recentJobs.length > 0 ? recentJobs[0] : null
+}
+```
+
+## Switching Between Jobs
+
+Users can switch between different jobs:
+
+```tsx
+const { setActiveJobById } = useBase()
+
+// Switch to a different job
+await setActiveJobById('job-uuid-here')
+```
+
+This updates the context and all components automatically re-query with the new `base_id`.
+
+### Automatic State Reset
+
+Components should reset their state when `base_id` changes:
+
+```tsx
+import { useResetOnChange } from '@/hooks/use-page-reset'
+
+export function CampaignsTable() {
+  const { baseId } = useBase()
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+
+  // Reset component state when baseId changes
+  useResetOnChange(baseId, () => {
+    setCampaigns([])
+    setIsLoading(true)
+    setError(null)
+  }, { skipInitial: true })
+
+  useEffect(() => {
+    if (baseId) {
+      fetchCampaigns()
+    }
+  }, [baseId])
+}
+```
+
+## Real-Time Subscriptions
+
+Subscribe to changes for the current job only:
+
+```tsx
+useEffect(() => {
+  if (!baseId) return
+
+  const channel = supabase
+    .channel(`campaigns_${baseId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'campaigns',
+        filter: `base_id=eq.${baseId}`  // Filter by base_id
+      },
+      (payload) => {
+        console.log('Campaign changed:', payload)
+        fetchCampaigns()
+      }
+    )
+    .subscribe()
+
+  return () => {
+    supabase.removeChannel(channel)
+  }
+}, [baseId])
+```
+
+## Job Statistics by Base ID
+
+Always query statistics using `base_id`, not `job_id`:
+
+```tsx
+// ✅ CORRECT: Use base_id for accurate counts
+export async function getJobStatisticsByBaseId(baseId: string) {
+  const { count: totalUsernames } = await supabase
+    .from('global_usernames')
+    .select('*', { count: 'exact', head: true })
+    .eq('base_id', baseId)
+
+  return { totalUsernames }
+}
+
+// ❌ DEPRECATED: Don't use job_id
+export async function getJobStatistics(jobId: string) {
+  // This might return incorrect counts in multi-tenant scenarios
+}
+```
+
+## Security Considerations
+
+### Row Level Security (RLS)
+
+For production deployments, implement Postgres RLS policies:
+
+```sql
+-- Enable RLS
+ALTER TABLE global_usernames ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Users can only access data for their active base_id
+CREATE POLICY "Isolate by base_id"
+ON global_usernames
+USING (base_id = current_setting('app.current_base_id')::text);
+```
+
+### Client-Side Validation
+
+Always validate `base_id` before making queries:
+
+```tsx
+if (!baseId) {
+  throw new Error('base_id is required for this operation')
+}
+
+if (!baseId.startsWith('app')) {
+  throw new Error('Invalid base_id format')
+}
+```
+
+### Audit Logging
+
+Log all cross-tenant operations:
+
+```tsx
+console.log('[BaseContext] Active job loaded:', {
+  job_id: activeJob.job_id,
+  base_id: activeJob.base_id,
+  influencer: activeJob.influencer_name,
+  platform: activeJob.platform
+})
+```
+
+## Migration from Legacy System
+
+If migrating from a single-tenant system:
+
+<Steps>
+  <Step title="Add base_id columns">
+    Add `base_id` column to all relevant tables:
+    
+    ```sql
+    ALTER TABLE global_usernames ADD COLUMN base_id TEXT;
+    ALTER TABLE daily_assignments ADD COLUMN base_id TEXT;
+    ALTER TABLE campaigns ADD COLUMN base_id TEXT;
+    ```
+  </Step>
+
+  <Step title="Backfill base_id values">
+    Populate `base_id` for existing records:
+    
+    ```sql
+    UPDATE global_usernames
+    SET base_id = (
+      SELECT airtable_base_id
+      FROM scraping_jobs
+      WHERE scraping_jobs.job_id = global_usernames.job_id
+    );
+    ```
+  </Step>
+
+  <Step title="Make base_id NOT NULL">
+    After backfilling, enforce the constraint:
+    
+    ```sql
+    ALTER TABLE global_usernames ALTER COLUMN base_id SET NOT NULL;
+    ```
+  </Step>
+
+  <Step title="Update application code">
+    Replace all queries to use `base_id` instead of hardcoded values.
+  </Step>
+
+  <Step title="Create indexes">
+    Add indexes for performance:
+    
+    ```sql
+    CREATE INDEX idx_global_usernames_base_id ON global_usernames(base_id);
+    CREATE INDEX idx_daily_assignments_base_id ON daily_assignments(base_id);
+    CREATE INDEX idx_campaigns_base_id ON campaigns(base_id);
+    ```
+  </Step>
+</Steps>
+
+## Testing Multi-Tenancy
+
+Test data isolation thoroughly:
+
+```tsx
+// Test 1: Create two jobs
+const job1 = await createScrapingJob({
+  influencer_name: 'Influencer A',
+  platform: 'instagram',
+  airtable_base_id: 'appAAAAAAAAAAA',
+})
+
+const job2 = await createScrapingJob({
+  influencer_name: 'Influencer B',
+  platform: 'tiktok',
+  airtable_base_id: 'appBBBBBBBBBBB',
+})
+
+// Test 2: Add usernames to both jobs
+await addUsernamesToJob(job1.job_id, job1.base_id, [
+  { id: '1', username: 'user1' }
+])
+
+await addUsernamesToJob(job2.job_id, job2.base_id, [
+  { id: '2', username: 'user2' }
+])
+
+// Test 3: Verify isolation
+const job1Users = await supabase
+  .from('global_usernames')
+  .select('*')
+  .eq('base_id', job1.base_id)
+
+const job2Users = await supabase
+  .from('global_usernames')
+  .select('*')
+  .eq('base_id', job2.base_id)
+
+// Assert: job1Users should only contain 'user1'
+// Assert: job2Users should only contain 'user2'
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always query with base_id">
+    Never query tables without filtering by `base_id`:
+    
+    ```tsx
+    // ❌ BAD: No base_id filter
+    const { data } = await supabase
+      .from('global_usernames')
+      .select('*')
+    
+    // ✅ GOOD: Filtered by base_id
+    const { data } = await supabase
+      .from('global_usernames')
+      .select('*')
+      .eq('base_id', baseId)
+    ```
+  </Accordion>
+
+  <Accordion title="Never hardcode base_id">
+    Always derive `base_id` from context or database:
+    
+    ```tsx
+    // ❌ BAD: Hardcoded
+    const baseId = 'appXXXXXXXXXXXXX'
+    
+    // ✅ GOOD: From context
+    const { baseId } = useBase()
+    
+    // ✅ GOOD: From database
+    const baseId = await getActiveBaseId()
+    ```
+  </Accordion>
+
+  <Accordion title="Validate base_id format">
+    Ensure `base_id` matches Airtable format:
+    
+    ```tsx
+    const isValidBaseId = (baseId: string) => {
+      return /^app[a-zA-Z0-9]{14}$/.test(baseId)
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Reset state on job switch">
+    Clear component state when switching jobs:
+    
+    ```tsx
+    useResetOnChange(baseId, () => {
+      // Reset all local state
+      setCampaigns([])
+      setUsernames([])
+      setError(null)
+    })
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Seeing Data from Wrong Job
+
+**Cause:** Missing `base_id` filter in query
+
+**Solution:**
+```tsx
+// Add explicit base_id filter
+.eq('base_id', baseId)
+```
+
+### BaseContext Returns Null
+
+**Cause:** No jobs exist in database or all jobs are archived
+
+**Solution:**
+- Create a new job via `/configure`
+- Activate an existing paused job
+- Check `scraping_jobs` table in Supabase
+
+### Statistics Show Wrong Counts
+
+**Cause:** Using deprecated `getJobStatistics(jobId)` instead of `getJobStatisticsByBaseId(baseId)`
+
+**Solution:**
+```tsx
+// Replace this
+const stats = await getJobStatistics(jobId)
+
+// With this
+const stats = await getJobStatisticsByBaseId(baseId)
+```
+
+## Next Steps
+
+- Review [Creating Jobs](/guides/creating-jobs) to set up new tenants
+- Learn [Managing Campaigns](/guides/managing-campaigns) for campaign operations
+- Explore [API Reference](/api/overview) for programmatic access
